@@ -8,30 +8,32 @@ namespace CGProject
         private int sizeX, sizeY, sizeZ;
         //Tamanho de cada Cell individual
         private float cellSize = 1f;
+        // Velocidade escalar
+        public float velocityScale = 1.0f;
 
         //Velocidade dos fluidos em cada cell
         private Vector3[,,] velocity;
-        //Buffer tempor·rio de velocidade para Advection
+        //Buffer tempor√°rio de velocidade para Advection
         private Vector3[,,] velocityTemp;
 
         //Densidade
         private float[,,] density;
-        //Buffer tempor·rio de velocidade para Advection
+        //Buffer tempor√°rio de velocidade para Advection
         private float[,,] densityTemp;
 
-        //Press„o 
+        //Press√£o 
         private float[,,] pressure;
 
-        //MudanÁa de velocidade
+        //Mudan√ßa de velocidade
         private float[,,] divergence;
 
-        //N˙mero de iteraÁıes de Jacobi para a resoluÁ„o da press„o
+        //N√∫mero de itera√ß√µes de Jacobi para a resolu√ß√£o da press√£o
         private const int _PressureIT = 30;
 
 
         /// <summary>
         /// Cria uma grid com o tamanho dado
-        /// Todas as propriedades s„o inicializadas com valor 0
+        /// Todas as propriedades s√£o inicializadas com valor 0
         /// </summary>
         public FluidGrid3D(int x, int y, int z)
         {
@@ -50,22 +52,22 @@ namespace CGProject
         }
 
         /// <summary>
-        /// AvaÁa a simula„o por um passo
+        /// Avan√ßa a simula√ß√£o por um passo
         /// !!!Alerta!!! Ordem importa
         /// </summary>
         public void Step(float dt)
         {
-            //Mover o campo de velocidade atravÈs de si mesmo (semi-Lagrangian)
+            //Mover o campo de velocidade atrav√©s de si mesmo (semi-Lagrangian)
             AdvectVelocity(dt);
-            //ForÁar a n„o comprimir
+            //For√ßar a n√£o comprimir
             Project();    
             //Mover densidade pelo campo de velocidade
             AdvectDensity(dt);
         }
 
         /// <summary>
-        /// AdvecÁ„o semi-Lagrangian de velocidade.
-        /// Cada cell da grid percorre o campo de velocidade para tr·s
+        /// Advec√ß√£o semi-Lagrangian de velocidade.
+        /// Cada cell da grid percorre o campo de velocidade para tr√°s
         /// e sampla a velocidade anterior.
         /// </summary>
         void AdvectVelocity(float dt)
@@ -74,12 +76,12 @@ namespace CGProject
                 for (int y = 1; y < sizeY - 1; y++)
                     for (int z = 1; z < sizeZ - 1; z++)
                     {
-                        //posiÁ„o atual da cell na grid
+                        //posi√ß√£o atual da cell na grid
                         Vector3 pos = new Vector3(x, y, z);
-                        //atravÈs da velocidade atual verificar posiÁ„o anterior
+                        //atrav√©s da velocidade atual verificar posi√ß√£o anterior
                         Vector3 prev = pos - velocity[x, y, z] * dt;
 
-                        //fazer sample da velocidade da ultima posiÁ„o
+                        //fazer sample da velocidade da ultima posi√ß√£o
                         velocityTemp[x, y, z] = SampleVelocity(prev);
                     }
             //ping-pong
@@ -87,8 +89,8 @@ namespace CGProject
         }
 
         /// <summary>
-        /// AdvecÁ„o semi-Lagrangian de densidade.
-        /// A densidade È transportada pelo campo de velocidade.
+        /// Advec√ß√£o semi-Lagrangian de densidade.
+        /// A densidade √© transportada pelo campo de velocidade.
         /// </summary>
         void AdvectDensity(float dt)
         {
@@ -106,18 +108,18 @@ namespace CGProject
         }
 
         /// <summary>
-        /// Impıe a incompressibilidade por meio de:
-        /// 1. C·lculo da divergÍncia da velocidade
-        /// 2. ResoluÁ„o da press„o
-        /// 3. SubtraÁ„o do gradiente de press„o da velocidade
+        /// Imp√µe a incompressibilidade por meio de:
+        /// 1. C√°lculo da diverg√™ncia da velocidade
+        /// 2. Resolu√ß√£o da press√£o
+        /// 3. Subtra√ß√£o do gradiente de press√£o da velocidade
         /// </summary>
         void Project()
         {
             ComputeDivergence();
             ClearPressure();
 
-            // metodo de Jacobi para a equaÁ„o de Poisson
-            // (recomendaÁ„o do chatgpt mas tambÈm levemente mencionado em
+            // metodo de Jacobi para a equa√ß√£o de Poisson
+            // (recomenda√ß√£o do chatgpt mas tamb√©m levemente mencionado em
             // https://cg.informatik.uni-freiburg.de/intern/seminar/gridFluids_fluid-EulerParticle.pdf)
             for (int i = 0; i < _PressureIT; i++)
                 JacobiPressure();
@@ -145,7 +147,7 @@ namespace CGProject
         }
 
         /// <summary>
-        /// Uma iteraÁ„o de Jacobi para resolver a equaÁ„o de Poisson da press„o.
+        /// Uma itera√ß√£o de Jacobi para resolver a equa√ß√£o de Poisson da press√£o.
         /// </summary>
         void JacobiPressure()
         {
@@ -162,8 +164,8 @@ namespace CGProject
         }
 
         /// <summary>
-        /// Subtrai o gradiente de press„o da velocidade,
-        /// tornando o campo de velocidade livre de divergÍncia.
+        /// Subtrai o gradiente de press√£o da velocidade,
+        /// tornando o campo de velocidade livre de diverg√™ncia.
         /// </summary>
         void SubtractPressureGradient()
         {
@@ -182,8 +184,8 @@ namespace CGProject
         }
 
         /// <summary>
-        /// Faz Sample do campo de velocidade usando interpolaÁ„o trilinear.
-        /// Necess·rio para estabilidade semi-Lagrangiana.
+        /// Faz Sample do campo de velocidade usando interpola√ß√£o trilinear.
+        /// Necess√°rio para estabilidade semi-Lagrangiana.
         /// </summary>
         Vector3 SampleVelocity(Vector3 p)
         {
@@ -212,7 +214,7 @@ namespace CGProject
 
 
         /// <summary>
-        /// Amostra o campo de densidade usando interpolaÁ„o trilinear.
+        /// Amostra o campo de densidade usando interpola√ß√£o trilinear.
         /// </summary>
         float SampleDensity(Vector3 p)
         {
@@ -243,7 +245,7 @@ namespace CGProject
         }
 
         /// <summary>
-        /// Limita as posiÁıes a um intervalo v·lido da grade.
+        /// Limita as posi√ß√µes a um intervalo v√°lido da grade.
         /// Impede o acesso a valores fora dos limites.
         /// </summary>
         Vector3 ClampPosition(Vector3 p)
@@ -255,7 +257,7 @@ namespace CGProject
         }
 
         /// <summary>
-        /// InterpolaÁ„o trilinear para valores Vector3.
+        /// Interpola√ß√£o trilinear para valores Vector3.
         /// </summary>
         Vector3 Trilerp(
             Vector3 c000, Vector3 c100,
@@ -276,7 +278,7 @@ namespace CGProject
         }
 
         /// <summary>
-        /// Limpa a press„o antes de aplicar o metodo de jacobi
+        /// Limpa a press√£o antes de aplicar o metodo de jacobi
         /// </summary>
         void ClearPressure()
         {
@@ -289,6 +291,57 @@ namespace CGProject
         void Swap<T>(ref T[,,] a, ref T[,,] b)
         {
             (a, b) = (b, a);
+        }
+
+        /// <summary>
+        /// Cria uma textura 2D da velocidade no plano XZ (meio da grade Y)
+        /// </summary>
+        public Texture2D GetVelocityTexture()
+        {
+            Texture2D tex = new Texture2D(sizeX, sizeZ);
+    
+            int middleY = sizeY / 2;
+    
+            for (int x = 0; x < sizeX; x++)
+            {
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    Vector3 vel = velocity[x, middleY, z];
+                    Color color = new Color(
+                        (vel.x + 1f) * 0.5f,
+                        0f,
+                        (vel.z + 1f) * 0.5f,
+                        1f
+                    );
+            
+                    tex.SetPixel(x, z, color);
+                }
+            }
+    
+            tex.Apply();
+            return tex;
+        }
+
+        /// <summary>
+        /// Adiciona densidade em uma posi√ß√£o espec√≠fica
+        /// </summary>
+        public void AddDensity(int x, int y, int z, float dens)
+        {
+            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
+            {
+                density[x, y, z] += dens;
+            }
+        }
+
+        /// <summary>
+        /// Adiciona velocidade em uma posi√ß√£o espec√≠fica
+        /// </summary>
+        public void AddVelocity(int x, int y, int z, Vector3 vel)
+        {
+            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
+            {
+                velocity[x, y, z] += vel;
+            }
         }
     }
 }
