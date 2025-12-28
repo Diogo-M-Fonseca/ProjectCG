@@ -39,9 +39,23 @@ namespace CGProject
             Vector3.up,
             Vector3.left,
             Vector3.back,
-            Vector3.front,
+            Vector3.forward,
             Vector3.right,
             Vector3.down,
         };
+        public static Mesh MeshGenerator(int res)
+        {
+            Mesh mesh = new Mesh();
+
+            // Depending on the "res" picked, there will be more divisions
+            // On the triangles of the mesh, which is increasing resolution
+            int numDiv = MathF.Max(0, res);
+            int triangleSize = numDiv + 2;
+
+            // Triangular number formula
+            int numVertFaces = triangleSize * (triangleSize + 1) / 2;
+
+            return mesh;
+        }
     }
 }
