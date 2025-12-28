@@ -119,6 +119,11 @@ namespace CGProject
 
             return mesh;
         }
+
+        // Sebastian Lague's CreateFace function
+        // Builds the vertex map for the octahedrons
+        // Fills in interior vertices (sideA, sideB, bottom)
+        // Generates the particles
         static void CreateFace(Edge sideA, Edge sideB, Edge bottom, bool reverse,
             Vector3[] vertices, int[] triangles, ref int vertexIndex, ref int triangleIndex, // Track positions
             int numDivisions, int numVertsPerFace)
