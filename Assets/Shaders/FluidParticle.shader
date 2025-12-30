@@ -2,6 +2,7 @@ Shader "Custom/FluidParticle"
 {
     Properties {
         _Color ("Base Color", Color) = (0.1, 0.3, 1.0, 1.0)
+        _ParticleSize ("Particle Size", Float) = 0.1
         _Velocity ("Velocity", Vector) = (0, 0, 0, 0)
         _FlowIntensity ("Flow Intensity", Float) = 1.0
     }
@@ -32,28 +33,30 @@ Shader "Custom/FluidParticle"
                 float4 color : COLOR;
             };
             
-            // UNIQUE TO YOU: Particle instance data
-            StructuredBuffer<float4> _ParticlePositions;
-            StructuredBuffer<float4> _ParticleVelocities;
+            // Particle instance data - CHANGED TO float3 to match C# Vector3
+            StructuredBuffer<float3> _ParticlePositions;
+            StructuredBuffer<float3> _ParticleVelocities;
+            float _ParticleSize;
             
             v2f vert (appdata v, uint instanceID : SV_InstanceID) {
                 v2f o;
                 
-                // Get particle data from buffers (your friend doesn't have this)
-                float4 particlePos = _ParticlePositions[instanceID];
-                float4 particleVel = _ParticleVelocities[instanceID];
+                // Get particle data from buffers
+                float3 particlePos = _ParticlePositions[instanceID];
+                float3 particleVel = _ParticleVelocities[instanceID];
                 
-                // Apply velocity-based deformation (UNIQUE VISUAL EFFECT)
-                float velocityStrength = length(particleVel.xyz);
+                // Apply velocity-based deformation
+                float velocityStrength = length(particleVel);
                 float3 deform = v.normal * velocityStrength * 0.1;
                 
-                // Position particle in world space
-                float4 worldPos = float4(particlePos.xyz + deform, 1.0);
+                // Position particle in world space with size scaling
+                // CHANGED: Added particle size scaling
+                float4 worldPos = float4(particlePos + deform + v.vertex.xyz * _ParticleSize, 1.0);
                 o.pos = UnityObjectToClipPos(worldPos);
                 o.worldPos = worldPos.xyz;
                 o.normal = v.normal;
                 
-                // Color based on velocity (your visual style)
+                // Color based on velocity
                 o.color = float4(
                     0.1 + particleVel.x * 0.5,  // Red = X velocity
                     0.3 + particleVel.y * 0.5,  // Green = Y velocity  
@@ -69,7 +72,7 @@ Shader "Custom/FluidParticle"
                 float3 lightDir = normalize(float3(0.3, 1, 0.2));
                 float diff = max(0, dot(i.normal, lightDir));
                 
-                // Add rim light effect (makes particles pop)
+                // Adds rim light effect
                 float3 viewDir = normalize(_WorldSpaceCameraPos - i.worldPos);
                 float rim = 1.0 - saturate(dot(viewDir, i.normal));
                 rim = smoothstep(0.5, 1.0, rim);

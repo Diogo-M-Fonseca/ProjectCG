@@ -187,7 +187,7 @@ namespace CGProject
         /// Faz Sample do campo de velocidade usando interpolação trilinear.
         /// Necessário para estabilidade semi-Lagrangiana.
         /// </summary>
-        Vector3 SampleVelocity(Vector3 p)
+        public Vector3 SampleVelocity(Vector3 p)
         {
             p = ClampPosition(p);
 
@@ -342,6 +342,16 @@ namespace CGProject
             {
                 velocity[x, y, z] += vel;
             }
+        }
+        
+        // Getter para a velocidade
+        public Vector3 GetVelocity(int x, int y, int z)
+        {
+            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
+            {
+                return velocity[x, y, z];
+            }
+            return Vector3.zero;
         }
     }
 }
