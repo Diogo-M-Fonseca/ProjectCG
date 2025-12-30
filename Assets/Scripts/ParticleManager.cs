@@ -171,26 +171,21 @@ namespace CGProject
 
                 // Aplica gravidade
                 velocity += gravity * Time.deltaTime;
-                
-                // Update da velocidade
-                particleVelocities[i] = velocity * grid.velocityScale;
-                
-                // Update da posição
+
+                particleVelocities[i] += velocity * Time.deltaTime;
+                particleVelocities[i] += gravity * Time.deltaTime;
+
                 particlePositions[i] += particleVelocities[i] * Time.deltaTime;
-                
+
                 // Cantos da simulação
-                if (particlePositions[i].x < 0) 
-                    particlePositions[i].x = simulationWidth - 1;
-                if (particlePositions[i].x >= simulationWidth) 
-                    particlePositions[i].x = 0;
-                if (particlePositions[i].y < 0) 
-                    particlePositions[i].y = gridHeight - 1;
-                if (particlePositions[i].y >= gridHeight) 
-                    particlePositions[i].y = 0;
-                if (particlePositions[i].z < 0) 
-                    particlePositions[i].z = simulationHeight - 1;
-                if (particlePositions[i].z >= simulationHeight) 
-                    particlePositions[i].z = 0;
+                if (particlePositions[i].x <= 1 || particlePositions[i].x >= simulationWidth - 2)
+                    particleVelocities[i].x *= -0.5f;
+
+                if (particlePositions[i].y <= 1 || particlePositions[i].y >= gridHeight - 2)
+                    particleVelocities[i].y *= -0.5f;
+
+                if (particlePositions[i].z <= 1 || particlePositions[i].z >= simulationHeight - 2)
+                    particleVelocities[i].z *= -0.5f;
             }
         }      
         void AddTestVelocity()
