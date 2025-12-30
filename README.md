@@ -32,10 +32,13 @@ Após os cálculos, através de interpolação trilinear, dá-nos uma amostra do
 
 ## Obstáculo 3 - Colisão
 
+Com a implementação de colisões, vem a implementação da viscosidade, completando a equação de Navier-Stokes(mesmo que simplificada). Utilizou-se tambem SPH (Smoothed Particle Hydrodynamics) para simular a própria partícula em vez de grelha para a aplicação da viscosidade tal como das suas colisões e uma grelha espacial para otimização (O(n) em vez de O(n²)).
 
 
+### Problemas encontrados:
 
-
+- A certas alturas as partículas tinham os seguintes comportamentos: Escalavam paredes, tremiam, eram projetadas para fora e teleportadas de volta, ignoravam as leis da gravidade, ignoravam as colisões e juntavam-se.
+- Mesmo depois da implementação de todos os parâmetros, as partículas não mantêm paradas como fluidos.
 
 
 

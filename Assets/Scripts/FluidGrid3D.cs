@@ -4,32 +4,36 @@ namespace CGProject
 {
     public class FluidGrid3D
     {
-        //Tamanho da Grid
+        // Tamanho da Grid
         private int sizeX, sizeY, sizeZ;
-        //Tamanho de cada Cell individual
+        // Tamanho de cada Cell individual
         private float cellSize = 1f;
         // Velocidade escalar
         public float velocityScale = 1.0f;
 
-        //Velocidade dos fluidos em cada cell
+        // Velocidade dos fluidos em cada cell
         private Vector3[,,] velocity;
-        //Buffer temporário de velocidade para Advection
+        // Buffer temporário de velocidade para Advection
         private Vector3[,,] velocityTemp;
 
-        //Densidade
+        // Densidade
         private float[,,] density;
-        //Buffer temporário de velocidade para Advection
+        // Buffer temporário de densidade
         private float[,,] densityTemp;
 
-        //Pressão 
+        // Pressão 
         private float[,,] pressure;
 
-        //Mudança de velocidade
+        // Divergência
         private float[,,] divergence;
 
-        //Número de iterações de Jacobi para a resolução da pressão
+        // Número de iterações de Jacobi para a resolução da pressão
         private const int _PressureIT = 50;
+        // Valor da viscosidade
+        private float viscosity = 0.1f;
 
+        // Gravidade aplicada à grid
+        private Vector3 gravity = new Vector3(0, -9.81f, 0);
 
         /// <summary>
         /// Cria uma grid com o tamanho dado
@@ -53,19 +57,21 @@ namespace CGProject
 
         /// <summary>
         /// Avança a simulação por um passo
-        /// !!!Alerta!!! Ordem importa
+        /// Ordem do Stable Fluids (1999)
         /// </summary>
         public void Step(float dt)
         {
-            //Aplica forças externas (gravidade)
+            // Aplica forças externas (gravidade)
             ApplyExternalForces(dt);
-            //Mover o campo de velocidade através de si mesmo (semi-Lagrangian)
+            // Mover o campo de velocidade através de si mesmo (semi-Lagrangian)
             AdvectVelocity(dt);
-            //Forçar a não comprimir
+            // Aplica viscosidade
+            ApplyViscosity(dt);
+            // Forçar a não comprimir
             Project();    
-            //Mover densidade pelo campo de velocidade
+            // Mover densidade pelo campo de velocidade
             AdvectDensity(dt);
-            //Força as particulas a manterem se dentro da caixa
+            // Força as partículas a manterem se dentro da caixa
             EnforceBoundary();
         }
 
@@ -80,15 +86,15 @@ namespace CGProject
                 for (int y = 1; y < sizeY - 1; y++)
                     for (int z = 1; z < sizeZ - 1; z++)
                     {
-                        //posição atual da cell na grid
+                        // posição atual da cell na grid
                         Vector3 pos = new Vector3(x, y, z);
-                        //através da velocidade atual verificar posição anterior
+                        // através da velocidade atual verificar posição anterior
                         Vector3 prev = pos - velocity[x, y, z] * dt;
 
-                        //fazer sample da velocidade da ultima posição
+                        // fazer sample da velocidade da ultima posição
                         velocityTemp[x, y, z] = SampleVelocity(prev);
                     }
-            //ping-pong
+            // ping-pong
             Swap(ref velocity, ref velocityTemp);
         }
 
@@ -111,6 +117,34 @@ namespace CGProject
             Swap(ref density, ref densityTemp);
         }
 
+        void ApplyViscosity(float dt)
+        {
+            for (int x = 1; x < sizeX - 1; x++)
+                for (int y = 1; y < sizeY - 1; y++)
+                    for (int z = 1; z < sizeZ - 1; z++)
+                    {
+                        // Laplaciano da velocidade
+                        Vector3 laplacian = 
+                            (velocity[x+1, y, z] + velocity[x-1, y, z] +
+                            velocity[x, y+1, z] + velocity[x, y-1, z] +
+                            velocity[x, y, z+1] + velocity[x, y, z-1] - 
+                            6 * velocity[x, y, z]) / (cellSize * cellSize);
+                        
+                        velocityTemp[x, y, z] = velocity[x, y, z] + viscosity * laplacian * dt;
+                    }
+            Swap(ref velocity, ref velocityTemp);
+        }
+
+        void ApplyExternalForces(float dt)
+        {
+            for (int x = 0; x < sizeX; x++)
+                for (int y = 0; y < sizeY; y++)
+                    for (int z = 0; z < sizeZ; z++)
+                    {
+                        velocity[x, y, z] += gravity * dt;
+                    }
+        }
+
         /// <summary>
         /// Impõe a incompressibilidade por meio de:
         /// 1. Cálculo da divergência da velocidade
@@ -123,8 +157,6 @@ namespace CGProject
             ClearPressure();
 
             // metodo de Jacobi para a equação de Poisson
-            // (recomendação do chatgpt mas também levemente mencionado em
-            // https://cg.informatik.uni-freiburg.de/intern/seminar/gridFluids_fluid-EulerParticle.pdf)
             for (int i = 0; i < _PressureIT; i++)
                 JacobiPressure();
 
@@ -165,6 +197,7 @@ namespace CGProject
                              pressure[x, y, z + 1] + pressure[x, y, z - 1] -
                              divergence[x, y, z]) / 6f;
                     }
+            ApplyPressureBoundary();
         }
 
         /// <summary>
@@ -215,7 +248,6 @@ namespace CGProject
                 tx, ty, tz
             );
         }
-
 
         /// <summary>
         /// Amostra o campo de densidade usando interpolação trilinear.
@@ -281,20 +313,165 @@ namespace CGProject
             return Vector3.Lerp(y0, y1, tz);
         }
 
-        /// <summary>
-        /// Limpa a pressão antes de aplicar o metodo de jacobi
-        /// </summary>
         void ClearPressure()
         {
             System.Array.Clear(pressure, 0, pressure.Length);
         }
 
-        /// <summary>
-        /// Troca duas matrizes 3D (buffers ping-pong).
-        /// </summary>
         void Swap<T>(ref T[,,] a, ref T[,,] b)
         {
             (a, b) = (b, a);
+        }
+
+        // Impede que as partículas saiam dos cantos da simulação
+        void EnforceBoundary()
+        {
+            // Paredes X
+            for (int y = 0; y < sizeY; y++)
+            {
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    velocity[0, y, z] = Vector3.zero;
+                    velocity[sizeX - 1, y, z] = Vector3.zero;
+                    
+                    density[0, y, z] = density[1, y, z];
+                    density[sizeX - 1, y, z] = density[sizeX - 2, y, z];
+                }
+            }
+            
+            // Paredes Z
+            for (int x = 0; x < sizeX; x++)
+            {
+                for (int y = 0; y < sizeY; y++)
+                {
+                    velocity[x, y, 0] = Vector3.zero;
+                    velocity[x, y, sizeZ - 1] = Vector3.zero;
+                    
+                    density[x, y, 0] = density[x, y, 1];
+                    density[x, y, sizeZ - 1] = density[x, y, sizeZ - 2];
+                }
+            }
+            
+            // Paredes Y
+            for (int x = 0; x < sizeX; x++)
+            {
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    velocity[x, 0, z] = new Vector3(
+                        velocity[x, 0, z].x,
+                        0,
+                        velocity[x, 0, z].z
+                    );
+                    
+                    velocity[x, sizeY - 1, z] = new Vector3(
+                        velocity[x, sizeY - 1, z].x,
+                        0,
+                        velocity[x, sizeY - 1, z].z
+                    );
+                    
+                    density[x, 0, z] = density[x, 1, z];
+                    density[x, sizeY - 1, z] = density[x, sizeY - 2, z];
+                }
+            }
+        }
+
+        void ApplyPressureBoundary()
+        {
+            // Paredes X
+            for (int y = 0; y < sizeY; y++)
+            {
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    pressure[0, y, z] = pressure[1, y, z];
+                    pressure[sizeX - 1, y, z] = pressure[sizeX - 2, y, z];
+                }
+            }
+            
+            // Paredes Y
+            for (int x = 0; x < sizeX; x++)
+            {
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    pressure[x, 0, z] = pressure[x, 1, z];
+                    pressure[x, sizeY - 1, z] = pressure[x, sizeY - 2, z];
+                }
+            }
+            
+            // Paredes Z
+            for (int x = 0; x < sizeX; x++)
+            {
+                for (int y = 0; y < sizeY; y++)
+                {
+                    pressure[x, y, 0] = pressure[x, y, 1];
+                    pressure[x, y, sizeZ - 1] = pressure[x, y, sizeZ - 2];
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adiciona densidade em uma posição específica
+        /// </summary>
+        public void AddDensity(int x, int y, int z, float dens)
+        {
+            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
+            {
+                density[x, y, z] += dens;
+            }
+        }
+
+        /// <summary>
+        /// Adiciona velocidade em uma posição específica
+        /// </summary>
+        public void AddVelocity(int x, int y, int z, Vector3 vel)
+        {
+            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
+            {
+                velocity[x, y, z] += vel;
+            }
+        }
+        
+        /// <summary>
+        /// Obtém a velocidade em uma posição específica
+        /// </summary>
+        public Vector3 GetVelocity(int x, int y, int z)
+        {
+            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
+            {
+                return velocity[x, y, z];
+            }
+            return Vector3.zero;
+        }
+
+        /// <summary>
+        /// Define a gravidade da grid
+        /// </summary>
+        public void SetGravity(Vector3 newGravity)
+        {
+            gravity = newGravity;
+        }
+
+        /// <summary>
+        /// Define a viscosidade da grid
+        /// </summary>
+        public void SetViscosity(float newViscosity)
+        {
+            viscosity = newViscosity;
+        }
+
+        /// <summary>
+        /// Obtém as dimensões da grid
+        /// </summary>
+        public Vector3Int GetDimensions()
+        {
+            return new Vector3Int(sizeX, sizeY, sizeZ);
+        }
+
+        /// <summary>
+        /// Obtém o tamanho das células
+        /// </summary>
+        public float GetCellSize()
+        {
+            return cellSize;
         }
 
         /// <summary>
@@ -325,84 +502,15 @@ namespace CGProject
             tex.Apply();
             return tex;
         }
-
         /// <summary>
-        /// Adiciona densidade em uma posição específica
+        /// Reseta toda a grid para zero
         /// </summary>
-        public void AddDensity(int x, int y, int z, float dens)
+        public void Reset()
         {
-            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
-            {
-                density[x, y, z] += dens;
-            }
-        }
-
-        /// <summary>
-        /// Adiciona velocidade em uma posição específica
-        /// </summary>
-        public void AddVelocity(int x, int y, int z, Vector3 vel)
-        {
-            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
-            {
-                velocity[x, y, z] += vel;
-            }
-        }
-        
-        // Getter para a velocidade
-        public Vector3 GetVelocity(int x, int y, int z)
-        {
-            if (x >= 0 && x < sizeX && y >= 0 && y < sizeY && z >= 0 && z < sizeZ)
-            {
-                return velocity[x, y, z];
-            }
-            return Vector3.zero;
-        }
-
-        void ApplyExternalForces(float dt)
-        {
-            Vector3 gravity = new Vector3(0, -9.81f, 0);
-            for (int x = 0; x < sizeX; x++)
-                for (int y = 0; y < sizeY; y++)
-                    for (int z = 0; z < sizeZ; z++)
-                    {
-                        velocity[x, y, z] += gravity * dt;
-                    }
-        }
-
-        void EnforceBoundary()
-        {
-            for (int y = 0; y < sizeY; y++)
-            {
-                for (int z = 0; z < sizeZ; z++)
-                {
-                    // Paredes da esquerda e direita
-                    velocity[0, y, z] = Vector3.zero;
-                    velocity[sizeX - 1, y, z] = Vector3.zero;
-                }
-            }
-            
-            // Paredes frente e trás
-            for (int x = 0; x < sizeX; x++)
-            {
-                for (int y = 0; y < sizeY; y++)
-                {
-                    velocity[x, y, 0] = Vector3.zero;
-                    velocity[x, y, sizeZ - 1] = Vector3.zero;
-                }
-            }
-            
-            // Fundo
-            for (int x = 0; x < sizeX; x++)
-            {
-                for (int z = 0; z < sizeZ; z++)
-                {
-                    velocity[x, 0, z] = new Vector3(
-                        velocity[x, 0, z].x,
-                        0,
-                        velocity[x, 0, z].z
-                    );
-                }
-            }
+            System.Array.Clear(velocity, 0, velocity.Length);
+            System.Array.Clear(density, 0, density.Length);
+            System.Array.Clear(pressure, 0, pressure.Length);
+            System.Array.Clear(divergence, 0, divergence.Length);
         }
     }
 }
