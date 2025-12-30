@@ -20,6 +20,7 @@ namespace CGProject
         // Definições de particula
         [SerializeField]
         private int res = 1; 
+        [SerializeField]
         private int particleCount = 5000; // Numero de particulas
         [SerializeField]
         private float particleSize = 0.1f;

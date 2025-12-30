@@ -33,7 +33,6 @@ Shader "Custom/FluidParticle"
                 float4 color : COLOR;
             };
             
-            // Particle instance data - CHANGED TO float3 to match C# Vector3
             StructuredBuffer<float3> _ParticlePositions;
             StructuredBuffer<float3> _ParticleVelocities;
             float _ParticleSize;
@@ -41,26 +40,22 @@ Shader "Custom/FluidParticle"
             v2f vert (appdata v, uint instanceID : SV_InstanceID) {
                 v2f o;
                 
-                // Get particle data from buffers
+                // Informação dos buffers
                 float3 particlePos = _ParticlePositions[instanceID];
                 float3 particleVel = _ParticleVelocities[instanceID];
                 
-                // Apply velocity-based deformation
-                float velocityStrength = length(particleVel);
-                float3 deform = v.normal * velocityStrength * 0.1;
+                // Posição da particula no espaço
+                float4 worldPos = float4(particlePos + v.vertex.xyz * _ParticleSize, 1.0);
                 
-                // Position particle in world space with size scaling
-                // CHANGED: Added particle size scaling
-                float4 worldPos = float4(particlePos + deform + v.vertex.xyz * _ParticleSize, 1.0);
                 o.pos = UnityObjectToClipPos(worldPos);
                 o.worldPos = worldPos.xyz;
                 o.normal = v.normal;
                 
-                // Color based on velocity
+                // Cor baseado em velocidade
                 o.color = float4(
-                    0.1 + particleVel.x * 0.5,  // Red = X velocity
-                    0.3 + particleVel.y * 0.5,  // Green = Y velocity  
-                    1.0,                         // Blue base
+                    0.1 + particleVel.x * 0.5,  // Vermelho = X velocity
+                    0.3 + particleVel.y * 0.5,  // Verde = Y velocity  
+                    1.0,                         // Azul
                     0.8                          // Alpha
                 );
                 
@@ -68,11 +63,10 @@ Shader "Custom/FluidParticle"
             }
             
             fixed4 frag (v2f i) : SV_Target {
-                // Simple lighting + velocity glow
+                // Luz e efeitos visuais
                 float3 lightDir = normalize(float3(0.3, 1, 0.2));
                 float diff = max(0, dot(i.normal, lightDir));
-                
-                // Adds rim light effect
+
                 float3 viewDir = normalize(_WorldSpaceCameraPos - i.worldPos);
                 float rim = 1.0 - saturate(dot(viewDir, i.normal));
                 rim = smoothstep(0.5, 1.0, rim);
