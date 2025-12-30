@@ -28,7 +28,7 @@ namespace CGProject
         private float[,,] divergence;
 
         //Número de iterações de Jacobi para a resolução da pressão
-        private const int _PressureIT = 30;
+        private const int _PressureIT = 50;
 
 
         /// <summary>
@@ -57,12 +57,16 @@ namespace CGProject
         /// </summary>
         public void Step(float dt)
         {
+            //Aplica forças externas (gravidade)
+            ApplyExternalForces(dt);
             //Mover o campo de velocidade através de si mesmo (semi-Lagrangian)
             AdvectVelocity(dt);
             //Forçar a não comprimir
             Project();    
             //Mover densidade pelo campo de velocidade
             AdvectDensity(dt);
+            //Força as particulas a manterem se dentro da caixa
+            EnforceBoundary();
         }
 
         /// <summary>
@@ -99,7 +103,7 @@ namespace CGProject
                     for (int z = 1; z < sizeZ - 1; z++)
                     {
                         Vector3 pos = new Vector3(x, y, z);
-                        Vector3 prev = pos - velocity[x, y, z] * dt;
+                        Vector3 prev = pos - velocity[x, y, z] * dt * velocityScale;
 
                         densityTemp[x, y, z] = SampleDensity(prev);
                     }
@@ -352,6 +356,33 @@ namespace CGProject
                 return velocity[x, y, z];
             }
             return Vector3.zero;
+        }
+
+        void ApplyExternalForces(float dt)
+        {
+            Vector3 gravity = new Vector3(0, -9.81f, 0);
+            for (int x = 0; x < sizeX; x++)
+                for (int y = 0; y < sizeY; y++)
+                    for (int z = 0; z < sizeZ; z++)
+                    {
+                        velocity[x, y, z] += gravity * dt;
+                    }
+        }
+
+        void EnforceBoundary()
+        {
+            for (int x = 0; x < sizeX; x++)
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    velocity[x, 0, z] = Vector3.zero; 
+                    velocity[x, sizeY - 1, z] = Vector3.zero;
+                }
+            for (int y = 0; y < sizeY; y++)
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    velocity[0, y, z] = Vector3.zero;
+                    velocity[sizeX - 1, y, z] = Vector3.zero;
+                }
         }
     }
 }

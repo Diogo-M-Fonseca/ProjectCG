@@ -16,7 +16,15 @@ namespace CGProject
         private int simulationHeight = 64;
         [SerializeField]
         private int gridHeight = 16;
-        
+        [SerializeField] 
+        private float gridVelocityInfluence = 20.0f;
+        [SerializeField] 
+        private float damping = 0.99f;
+        [SerializeField] 
+        private float maxSpeed = 10f;
+        [SerializeField] 
+        private float buoyancy = 3f;
+
         // Definições de particula
         [SerializeField]
         private int res = 1; 
@@ -26,21 +34,21 @@ namespace CGProject
         private float particleSize = 0.1f;
         [SerializeField]
         private Material particleMaterial;
-        private Vector3 gravity = new Vector3(0, -9.81f, 0);
+        private readonly Vector3 gravity = new Vector3(0, -9.81f, 0);
 
         // Visuais
         private Texture2D velocityTexture;
         private Mesh quadMesh;
         
         // Arrays de data
-        Vector3[] particlePositions;
-        Vector3[] particleVelocities;
+        private Vector3[] particlePositions;
+        private Vector3[] particleVelocities;
         
         // Buffers
-        ComputeBuffer particlePositionsBuffer;
-        ComputeBuffer particleVelocitiesBuffer;
+        private ComputeBuffer particlePositionsBuffer;
+        private ComputeBuffer particleVelocitiesBuffer;
         
-        Mesh particleMesh;
+        private Mesh particleMesh;
         
         void Start()
         {
@@ -52,9 +60,6 @@ namespace CGProject
             
             // Gera a mesh de particulas
             particleMesh = FluidGenerator.MeshGenerator(res); // Inserir a resolução
-            
-            // Cria a mesh para o display
-            CreateQuadMesh();
             
             // Inicializa os arrays de particulas
             particlePositions = new Vector3[particleCount];
@@ -68,9 +73,9 @@ namespace CGProject
                 // No entanto mesmo se escaparem de alguma forma
                 // Serão puxadas de volta
                 particlePositions[i] = new Vector3(
-                    Random.Range(1, simulationWidth - 1),
-                    Random.Range(1, gridHeight - 1),
-                    Random.Range(1, simulationHeight - 1)
+                    Random.Range(1, simulationWidth - 2),
+                    Random.Range(1, gridHeight - 2),
+                    Random.Range(1, simulationHeight - 2)
                 );
                 particleVelocities[i] = Vector3.zero;
             }
@@ -94,7 +99,6 @@ namespace CGProject
             if (particleMaterial != null)
             {
                 particleMaterial.SetBuffer("_ParticlePositions", particlePositionsBuffer);
-                particleMaterial.SetBuffer("_ParticleVelocities", particleVelocitiesBuffer);
                 particleMaterial.SetFloat("_ParticleSize", particleSize);
             }
             else
@@ -102,93 +106,101 @@ namespace CGProject
                 Debug.LogError("No particle material assigned!");
             }
             
-            // Cria textura para debug
-            velocityTexture = new Texture2D(simulationWidth, simulationHeight);
         }
-        
+
         void Update()
-        {   
-            if (grid == null)
-            {
-                Debug.LogWarning("Grid is null");
-                return;
-            }
-            
+        {
+            float dt = Time.deltaTime;
+
             // Update da simulação
-            grid.Step(Time.deltaTime);
-            
-            // Vai buscar a texture para visualização
-            velocityTexture = grid.GetVelocityTexture();
-            
+            grid.Step(dt);
+
             // Update das partículas
-            UpdateParticles();
-            
-            // Envia data para os buffers
-            if (particlePositionsBuffer != null && particleVelocitiesBuffer != null)
-            {
-                particlePositionsBuffer.SetData(particlePositions);
-                particleVelocitiesBuffer.SetData(particleVelocities);
-                
-                // Renderiza as partículas
-                if (particleMaterial != null)
-                {
-                    Graphics.DrawMeshInstancedProcedural(
-                        particleMesh, 
-                        0, 
-                        particleMaterial, 
-                        particleMesh.bounds, 
-                        particleCount
-                    );
-                }
-            }
+            UpdateParticles(dt);
+
+            particlePositionsBuffer.SetData(particlePositions);
+
+            Graphics.DrawMeshInstancedProcedural(
+                particleMesh,
+                0,
+                particleMaterial,
+                new Bounds(Vector3.zero, Vector3.one * 1000f),
+                particleCount);
         }
-        
-        void UpdateParticles()
+
+        void UpdateParticles(float dt)
         {
             for (int i = 0; i < particleCount; i++)
             {
-                // Converte a posição das partículas para indices
-                int gridX = Mathf.FloorToInt(particlePositions[i].x);
-                int gridY = Mathf.FloorToInt(particlePositions[i].y);
-                int gridZ = Mathf.FloorToInt(particlePositions[i].z);
-                
-                // Dá clamp às paredes da simulação
-                gridX = Mathf.Clamp(gridX, 1, simulationWidth - 2);
-                gridY = Mathf.Clamp(gridY, 1, gridHeight - 2);
-                gridZ = Mathf.Clamp(gridZ, 1, simulationHeight - 2);
-            
-                // Usa a velocidade da grid
+                Vector3 pos = particlePositions[i];
+                // Clamp sampling position inside grid
                 Vector3 samplePos = new Vector3(
-                    particlePositions[i].x,
-                    particlePositions[i].y,
-                    particlePositions[i].z);
-                   
-                // Dá clamp da posição para evitar "out-of-bounds"
-                samplePos.x = Mathf.Clamp(samplePos.x, 1, simulationWidth - 2);
-                samplePos.y = Mathf.Clamp(samplePos.y, 1, gridHeight - 2);
-                samplePos.z = Mathf.Clamp(samplePos.z, 1, simulationHeight - 2);
-                
-                Vector3 velocity = grid.SampleVelocity(samplePos);
+                    Mathf.Clamp(pos.x, 1, simulationWidth - 2),
+                    Mathf.Clamp(pos.y, 1, gridHeight - 2),
+                    Mathf.Clamp(pos.z, 1, simulationHeight - 2)
+                );
 
-                // Aplica gravidade
-                velocity += gravity * Time.deltaTime;
+                // Faz sample da velocidade do fluido
+                Vector3 fluidVelocity = grid.SampleVelocity(samplePos);
 
-                particleVelocities[i] += velocity * Time.deltaTime;
-                particleVelocities[i] += gravity * Time.deltaTime;
+                // Calcula as forças com a gravidade
+                Vector3 acceleration =fluidVelocity * gridVelocityInfluence + Vector3.up * buoyancy + gravity;
 
-                particlePositions[i] += particleVelocities[i] * Time.deltaTime;
+                // implementa as velocidade
+                particleVelocities[i] += acceleration * dt;
 
-                // Cantos da simulação
-                if (particlePositions[i].x <= 1 || particlePositions[i].x >= simulationWidth - 2)
-                    particleVelocities[i].x *= -0.5f;
+                // Fricção (damping)
+                particleVelocities[i] *= damping;
 
-                if (particlePositions[i].y <= 1 || particlePositions[i].y >= gridHeight - 2)
-                    particleVelocities[i].y *= -0.5f;
+                // Limitar velocidade maxima
+                particleVelocities[i] = Vector3.ClampMagnitude(particleVelocities[i], maxSpeed);
 
-                if (particlePositions[i].z <= 1 || particlePositions[i].z >= simulationHeight - 2)
-                    particleVelocities[i].z *= -0.5f;
+                // Aplicar posição
+                particlePositions[i] += particleVelocities[i] * dt;
+
+                // Colisões das barreiras 
+                Vector3 vel = particleVelocities[i];
+
+                // Limites X
+                if (pos.x < 1f)
+                {
+                    pos.x = 1f;
+                    vel.x *= -0.5f;
+                }
+                else if (pos.x > simulationWidth - 2f)
+                {
+                    pos.x = simulationWidth - 2f;
+                    vel.x *= -0.5f;
+                }
+
+                // Limites Y
+                if (pos.y < 1f)
+                {
+                    pos.y = 1f;
+                    vel.y *= -0.5f;
+                }
+                else if (pos.y > gridHeight - 2f)
+                {
+                    pos.y = gridHeight - 2f;
+                    vel.y *= -0.5f;
+                }
+
+                // Limites Z
+                if (pos.z < 1f)
+                {
+                    pos.z = 1f;
+                    vel.z *= -1f;
+                }
+                else if (pos.z > simulationHeight - 2f)
+                {
+                    pos.z = simulationHeight - 2f;
+                    vel.z *= -1f;
+                }
+
+                particlePositions[i] = pos;
+                particleVelocities[i] = vel;
             }
-        }      
+        }
         void AddTestVelocity()
         {
             // Adiciona um vortex
@@ -208,7 +220,7 @@ namespace CGProject
                     if (distance < 10f && distance > 0.1f)
                     {
                         // Cria um espaço circular
-                        Vector3 velocity = new Vector3(-dz / distance, 0, dx / distance) * 2f;
+                        Vector3 velocity = new Vector3(-dz, 0, dx).normalized * 2f;
                         grid.AddVelocity(x, middleY, z, velocity);
                         
                         // Adiciona densidade
@@ -218,35 +230,11 @@ namespace CGProject
             }
         }
         
-        void CreateQuadMesh()
-        {
-            quadMesh = new Mesh();
-            quadMesh.vertices = new Vector3[]
-            {
-                new Vector3(-0.5f, -0.5f, 0),
-                new Vector3(0.5f, -0.5f, 0),
-                new Vector3(0.5f, 0.5f, 0),
-                new Vector3(-0.5f, 0.5f, 0)
-            };
-            quadMesh.triangles = new int[] { 0, 1, 2, 0, 2, 3 };
-            quadMesh.uv = new Vector2[]
-            {
-                new Vector2(0, 0),
-                new Vector2(1, 0),
-                new Vector2(1, 1),
-                new Vector2(0, 1)
-            };
-            quadMesh.RecalculateNormals();
-        }
         
         void OnDestroy()
         {
-            if (particlePositionsBuffer != null) 
-                particlePositionsBuffer.Release();
-            if (particleVelocitiesBuffer != null) 
-                particleVelocitiesBuffer.Release();
-            if (velocityTexture != null)
-                Destroy(velocityTexture);
+            particlePositionsBuffer?.Release();
+            particleVelocitiesBuffer?.Release();
         }
     }
 }
