@@ -1,42 +1,41 @@
 using UnityEngine;
-using System.Collections.Generic;
 
 namespace CGProject
 {
     /// <summary>
-    /// Script responsible for applying grid's parameters to fluid particles
+    /// Script responsavel por aplicar os parametros que afetarão as partículas
     /// </summary>
     public class ParticleManager : MonoBehaviour
     {
         public FluidGrid3D grid;
         
-        // Simulation parameters
+        // Parametros da simulação
         [SerializeField]
-        private int simulationWidth = 64; // Start with smaller values for testing
+        private int simulationWidth = 64;
         [SerializeField]
         private int simulationHeight = 64;
         [SerializeField]
-        private int gridHeight = 16; // Reduced for 3D
+        private int gridHeight = 16;
         
-        // Particle settings
+        // Definições de particula
         [SerializeField]
-        private int particleCount = 5000; // Start with fewer particles
+        private int res = 1; 
+        private int particleCount = 5000; // Numero de particulas
         [SerializeField]
         private float particleSize = 0.1f;
         [SerializeField]
         private Material particleMaterial;
-        
-        // Visuals
-        [SerializeField]
-        private bool showVelocityTexture = true;
+        private Vector3 gravity = new Vector3(0, -9.81f, 0);
+
+        // Visuais
         private Texture2D velocityTexture;
         private Mesh quadMesh;
         
-        // Data arrays
+        // Arrays de data
         Vector3[] particlePositions;
         Vector3[] particleVelocities;
         
-        // GPU buffers
+        // Buffers
         ComputeBuffer particlePositionsBuffer;
         ComputeBuffer particleVelocitiesBuffer;
         
@@ -44,35 +43,38 @@ namespace CGProject
         
         void Start()
         {
-            // Create the grid
+            // Cria a grid
             grid = new FluidGrid3D(simulationWidth, gridHeight, simulationHeight);
             
-            // Add initial velocity
+            // Adiciona velocidade teste
             AddTestVelocity();
             
-            // Generate particle mesh
-            particleMesh = FluidGenerator.MeshGenerator(3); // Lower resolution for performance
+            // Gera a mesh de particulas
+            particleMesh = FluidGenerator.MeshGenerator(res); // Inserir a resolução
             
-            // Create quad for texture display
+            // Cria a mesh para o display
             CreateQuadMesh();
             
-            // Initialize particle arrays
+            // Inicializa os arrays de particulas
             particlePositions = new Vector3[particleCount];
             particleVelocities = new Vector3[particleCount];
             
-            // Initialize particles within grid bounds
+            // Inicializa partículas dentro dos parametros definidos
             for (int i = 0; i < particleCount; i++)
             {
-                // Place particles in grid space (0 to size)
+                // Coloca as particulas no espaço,
+                // O mapa terá fisica que as impeça de escapar
+                // No entanto mesmo se escaparem de alguma forma
+                // Serão puxadas de volta
                 particlePositions[i] = new Vector3(
-                    Random.Range(1, simulationWidth - 1),  // Avoid edges
+                    Random.Range(1, simulationWidth - 1),
                     Random.Range(1, gridHeight - 1),
                     Random.Range(1, simulationHeight - 1)
                 );
                 particleVelocities[i] = Vector3.zero;
             }
             
-            // Create compute buffers
+            // Cria os compute buffers
             particlePositionsBuffer = new ComputeBuffer(
                 particleCount, 
                 sizeof(float) * 3
@@ -83,11 +85,11 @@ namespace CGProject
                 sizeof(float) * 3
             );
             
-            // Set initial data
+            // Define a data inicial
             particlePositionsBuffer.SetData(particlePositions);
             particleVelocitiesBuffer.SetData(particleVelocities);
             
-            // Connect to shader
+            // Conecta ao shader
             if (particleMaterial != null)
             {
                 particleMaterial.SetBuffer("_ParticlePositions", particlePositionsBuffer);
@@ -99,7 +101,7 @@ namespace CGProject
                 Debug.LogError("No particle material assigned!");
             }
             
-            // Create velocity texture for debugging
+            // Cria textura para debug
             velocityTexture = new Texture2D(simulationWidth, simulationHeight);
         }
         
@@ -111,22 +113,22 @@ namespace CGProject
                 return;
             }
             
-            // Update simulation
+            // Update da simulação
             grid.Step(Time.deltaTime);
             
-            // Get velocity texture for visualization
+            // Vai buscar a texture para visualização
             velocityTexture = grid.GetVelocityTexture();
             
-            // Update particles
+            // Update das partículas
             UpdateParticles();
             
-            // Send data to buffers
+            // Envia data para os buffers
             if (particlePositionsBuffer != null && particleVelocitiesBuffer != null)
             {
                 particlePositionsBuffer.SetData(particlePositions);
                 particleVelocitiesBuffer.SetData(particleVelocities);
                 
-                // Render particles
+                // Renderiza as partículas
                 if (particleMaterial != null)
                 {
                     Graphics.DrawMeshInstancedProcedural(
@@ -144,36 +146,39 @@ namespace CGProject
         {
             for (int i = 0; i < particleCount; i++)
             {
-                // Convert particle position to grid indices
+                // Converte a posição das partículas para indices
                 int gridX = Mathf.FloorToInt(particlePositions[i].x);
                 int gridY = Mathf.FloorToInt(particlePositions[i].y);
                 int gridZ = Mathf.FloorToInt(particlePositions[i].z);
                 
-                // Clamp to grid bounds (but keep them within sampling range)
+                // Dá clamp às paredes da simulação
                 gridX = Mathf.Clamp(gridX, 1, simulationWidth - 2);
                 gridY = Mathf.Clamp(gridY, 1, gridHeight - 2);
                 gridZ = Mathf.Clamp(gridZ, 1, simulationHeight - 2);
             
-                // Sample velocity from grid - Use float coordinates for trilinear interpolation
+                // Usa a velocidade da grid
                 Vector3 samplePos = new Vector3(
-                    particlePositions[i].x,  // Use actual float position, not integer
+                    particlePositions[i].x,
                     particlePositions[i].y,
                     particlePositions[i].z);
-            
-                // Clamp the sampling position to avoid out-of-bounds
+                   
+                // Dá clamp da posição para evitar "out-of-bounds"
                 samplePos.x = Mathf.Clamp(samplePos.x, 1, simulationWidth - 2);
                 samplePos.y = Mathf.Clamp(samplePos.y, 1, gridHeight - 2);
                 samplePos.z = Mathf.Clamp(samplePos.z, 1, simulationHeight - 2);
                 
-                Vector3 velocity = grid.SampleVelocity(samplePos);  // Now this will work
+                Vector3 velocity = grid.SampleVelocity(samplePos);
+
+                // Aplica gravidade
+                velocity += gravity * Time.deltaTime;
                 
-                // Update particle velocity
+                // Update da velocidade
                 particleVelocities[i] = velocity * grid.velocityScale;
                 
-                // Update position
+                // Update da posição
                 particlePositions[i] += particleVelocities[i] * Time.deltaTime;
                 
-                // Boundary handling - wrap around
+                // Cantos da simulação
                 if (particlePositions[i].x < 0) 
                     particlePositions[i].x = simulationWidth - 1;
                 if (particlePositions[i].x >= simulationWidth) 
@@ -190,7 +195,7 @@ namespace CGProject
         }      
         void AddTestVelocity()
         {
-            // Adds vortex velocity field
+            // Adiciona um vortex
             int centerX = simulationWidth / 2;
             int centerZ = simulationHeight / 2;
             int middleY = gridHeight / 2;
@@ -199,18 +204,18 @@ namespace CGProject
             {
                 for (int z = 1; z < simulationHeight - 1; z++)
                 {
-                    // Calculates vector from center
+                    // Calcula o vetor pelo centro
                     float dx = x - centerX;
                     float dz = z - centerZ;
                     float distance = Mathf.Sqrt(dx * dx + dz * dz);
                     
                     if (distance < 10f && distance > 0.1f)
                     {
-                        // Creates circular velocity field
+                        // Cria um espaço circular
                         Vector3 velocity = new Vector3(-dz / distance, 0, dx / distance) * 2f;
                         grid.AddVelocity(x, middleY, z, velocity);
                         
-                        // Add some density for visualization
+                        // Adiciona densidade
                         grid.AddDensity(x, middleY, z, 1f);
                     }
                 }
@@ -238,18 +243,8 @@ namespace CGProject
             quadMesh.RecalculateNormals();
         }
         
-        void OnGUI()
-        {
-            if (showVelocityTexture && velocityTexture != null)
-            {
-                // Debug
-                GUI.DrawTexture(new Rect(10, 10, 256, 256), velocityTexture, ScaleMode.ScaleToFit);
-            }
-        }
-        
         void OnDestroy()
         {
-            // Cleanup
             if (particlePositionsBuffer != null) 
                 particlePositionsBuffer.Release();
             if (particleVelocitiesBuffer != null) 

@@ -3,31 +3,31 @@ using UnityEngine;
 namespace CGProject
 {
     /// <summary>
-    /// Script responsible for the generation of octahedrons to be later
-    /// used as each particle for semi-lagrangian fluid simulation
+    /// Script responsavel pela geração de octaedros usado como particula para
+    /// a simulação de fluídos semi-lagrangiana
     /// </summary>
     public static class FluidGenerator
     {
         static readonly int[] edgeVertex =
         {
-            // Top to Middle
+            // Topo ao centro
             0,1, 0,2, 0,3, 0,4,
 
-            // Middle connections
+            // Conexões do centro
             1,2, 2,3, 3,4, 4,1,
 
-            // Bottom to Middle
+            // Baixo ao centro
             5,1, 5,2, 5,3, 5,4,
         };
         static readonly int[] faceEdges =
         {
-            // Top faces (pointing up)
+            // Parte de cima
             0,1,4,
             1,2,5,
             2,3,6,
             3,0,7,
 
-            // Bottom faces (pointing down)
+            // Parte de baixo
             8,9,4,
             9,10,5,
             10,11,6,
@@ -46,27 +46,27 @@ namespace CGProject
         {
             Mesh mesh = new Mesh();
 
-            // Depending on the "res" picked, there will be more divisions
-            // On the triangles of the mesh, which is increasing resolution
+            // Dependendo da "res" escolhida, haverão mais divisões nos triangulos
+            // da mesh, ou seja, aumenta a resolução
             int numDiv = Mathf.Max(0, res);
             int triangleSize = numDiv + 2;
 
-            // Triangular number formula
+            // Formula para o enésimo número triangular
             int numVertFaces = triangleSize * (triangleSize + 1) / 2;
 
-            // Total vertices calculation
+            // Calculo do total de vertices
             int totalVertices = numVertFaces * 8 - (numDiv + 2) * 12 + 6;
 
             int trisFace = (numDiv + 1) * (numDiv + 1);
 
-            // trisFace * 8 * 3 because 8 sides of a octahedron and 3 sides of a triangle
+            // trisFace * 8 * 3 porque são 8 lados do octaedro e 3 lados de cada triângulo
             int totalIndex = trisFace * 8 * 3;
 
             Vector3[] vertices = new Vector3[totalVertices];
             int[] triangles = new int[totalIndex];
 
 
-            // Adding the vertices to the array
+            // Adiciona os vertices ao array
             for (int i = 0; i < 6; i++) 
             {
                 vertices[i] = baseVert[i];
@@ -74,7 +74,7 @@ namespace CGProject
             int nextVertIndex = 6;
             int triangleIndex = 0;
 
-            // Creating edges
+            // Cria as arestas
             Edge[] edges = new Edge[12];
             for (int i = 0; i < edgeVertex.Length; i += 2) 
             {
@@ -83,11 +83,11 @@ namespace CGProject
                 Vector3 start = vertices[startIdx];
                 Vector3 end = vertices[endIdx];
             
-                // Array for all vertices along this edge
+                // Array para todos os vértices desta aresta
                 int[] edgeVerts = new int[numDiv + 2];
                 edgeVerts[0] = startIdx;
             
-                // Adding subdivided vertices
+                // Adiciona os vertices subdivididos
                 for (int div = 0; div < numDiv; div++) 
                 {
                     float t = (div + 1f) / (numDiv + 1f);
@@ -105,7 +105,7 @@ namespace CGProject
                 Edge sideB = edges[faceEdges[face * 3 + 1]];
                 Edge bottom = edges[faceEdges[face * 3 + 2]];
                 
-                // Bottom faces need reversed winding
+                // A parte de baixo tem de ser criada de forma reversa
                 bool reverse = face >= 4;
                 
                 CreateFace(sideA, sideB, bottom, reverse, vertices, triangles, 
@@ -120,10 +120,9 @@ namespace CGProject
             return mesh;
         }
 
-        // Sebastian Lague's CreateFace function
-        // Builds the vertex map for the octahedrons
-        // Fills in interior vertices (sideA, sideB, bottom)
-        // Generates the particles
+        // Função de CreateFace de Sebastian Lague
+        // Constroi um vertex map para os octaedros
+        // Enche os interiores e gera as particulas
         static void CreateFace(Edge sideA, Edge sideB, Edge bottom, bool reverse,
             Vector3[] vertices, int[] triangles, ref int vertexIndex, ref int triangleIndex, // Track positions
             int numDivisions, int numVertsPerFace)
@@ -132,15 +131,15 @@ namespace CGProject
             int[] vertexMap = new int[numVertsPerFace];
             int vertexMapIndex = 0;
             
-            // Top vertex
+            // Vertex do topo
             vertexMap[vertexMapIndex++] = sideA.vertexIndices[0];
             
             for (int i = 1; i < numPointsInEdge - 1; i++)
             {
-                // Side A vertex
+                // Vertex do lado A
                 vertexMap[vertexMapIndex++] = sideA.vertexIndices[i];
                 
-                // Adding inner vertices
+                // Adiciona vertex interiores
                 Vector3 sideAVertex = vertices[sideA.vertexIndices[i]];
                 Vector3 sideBVertex = vertices[sideB.vertexIndices[i]];
                 int numInnerPoints = i - 1;
@@ -153,17 +152,16 @@ namespace CGProject
                     vertexIndex++;
                 }
                 
-                // Side B vertex
+                // Vertex do lado B
                 vertexMap[vertexMapIndex++] = sideB.vertexIndices[i];
             }
             
-            // Add bottom edge vertices
+            // Adiciona os vertices das arestas de baixo
             for (int i = 0; i < numPointsInEdge; i++)
             {
                 vertexMap[vertexMapIndex++] = bottom.vertexIndices[i];
             }
             
-            // Triangulate (same logic, but writing to triangles array)
             int numRows = numDivisions + 1;
             for (int row = 0; row < numRows; row++)
             {
