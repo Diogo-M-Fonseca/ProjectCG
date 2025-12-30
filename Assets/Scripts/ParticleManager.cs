@@ -22,8 +22,6 @@ namespace CGProject
         private float damping = 0.99f;
         [SerializeField] 
         private float maxSpeed = 10f;
-        [SerializeField] 
-        private float buoyancy = 3f;
 
         // Definições de particula
         [SerializeField]
@@ -34,11 +32,6 @@ namespace CGProject
         private float particleSize = 0.1f;
         [SerializeField]
         private Material particleMaterial;
-        private readonly Vector3 gravity = new Vector3(0, -9.81f, 0);
-
-        // Visuais
-        private Texture2D velocityTexture;
-        private Mesh quadMesh;
         
         // Arrays de data
         private Vector3[] particlePositions;
@@ -54,9 +47,6 @@ namespace CGProject
         {
             // Cria a grid
             grid = new FluidGrid3D(simulationWidth, gridHeight, simulationHeight);
-            
-            // Adiciona velocidade teste
-            AddTestVelocity();
             
             // Gera a mesh de particulas
             particleMesh = FluidGenerator.MeshGenerator(res); // Inserir a resolução
@@ -132,105 +122,83 @@ namespace CGProject
         {
             for (int i = 0; i < particleCount; i++)
             {
+                // Posição atual
                 Vector3 pos = particlePositions[i];
-                // Clamp sampling position inside grid
+                
+                // Dá sample da posição da partícula
                 Vector3 samplePos = new Vector3(
                     Mathf.Clamp(pos.x, 1, simulationWidth - 2),
                     Mathf.Clamp(pos.y, 1, gridHeight - 2),
                     Mathf.Clamp(pos.z, 1, simulationHeight - 2)
                 );
 
-                // Faz sample da velocidade do fluido
+                // Dá sample da velocidade da grid
                 Vector3 fluidVelocity = grid.SampleVelocity(samplePos);
-
-                // Calcula as forças com a gravidade
-                Vector3 acceleration =fluidVelocity * gridVelocityInfluence + Vector3.up * buoyancy + gravity;
-
-                // implementa as velocidade
+                
+                // Aplica as forças da grid
+                Vector3 acceleration = fluidVelocity * gridVelocityInfluence;
+                
+                // Aplica aceleração
                 particleVelocities[i] += acceleration * dt;
-
-                // Fricção (damping)
+                
+                // Aplica fricção
                 particleVelocities[i] *= damping;
-
-                // Limitar velocidade maxima
-                particleVelocities[i] = Vector3.ClampMagnitude(particleVelocities[i], maxSpeed);
-
-                // Aplicar posição
-                particlePositions[i] += particleVelocities[i] * dt;
-
-                // Colisões das barreiras 
-                Vector3 vel = particleVelocities[i];
-
-                // Limites X
-                if (pos.x < 1f)
+                
+                // Limita a velocidade máxima
+                if (particleVelocities[i].magnitude > maxSpeed)
                 {
-                    pos.x = 1f;
+                    particleVelocities[i] = particleVelocities[i].normalized * maxSpeed;
+                }
+                
+                // Calcula a nova posição após a velocidade ser aplicada
+                Vector3 newPos = pos + particleVelocities[i] * dt;
+                
+                // Guarda a velocidade para colisões
+                Vector3 vel = particleVelocities[i];                
+                
+                // Colisões com X
+                if (newPos.x < 1f)
+                {
+                    newPos.x = 1f;
                     vel.x *= -0.5f;
                 }
-                else if (pos.x > simulationWidth - 2f)
+                else if (newPos.x > simulationWidth - 2f)
                 {
-                    pos.x = simulationWidth - 2f;
+                    newPos.x = simulationWidth - 2f;
                     vel.x *= -0.5f;
                 }
-
-                // Limites Y
-                if (pos.y < 1f)
+                
+                // Colisões com Y
+                if (newPos.y < 1f)
                 {
-                    pos.y = 1f;
+                    newPos.y = 1f;
+                    vel.y = Mathf.Max(vel.y * -0.2f, 0f);
+                    vel.x *= 0.8f;
+                    vel.z *= 0.8f;
+                }
+                else if (newPos.y > gridHeight - 2f)
+                {
+                    newPos.y = gridHeight - 2f;
                     vel.y *= -0.5f;
                 }
-                else if (pos.y > gridHeight - 2f)
+                
+                // Colisões com Z
+                if (newPos.z < 1f)
                 {
-                    pos.y = gridHeight - 2f;
-                    vel.y *= -0.5f;
+                    newPos.z = 1f;
+                    vel.z *= -0.5f;
                 }
-
-                // Limites Z
-                if (pos.z < 1f)
+                else if (newPos.z > simulationHeight - 2f)
                 {
-                    pos.z = 1f;
-                    vel.z *= -1f;
+                    newPos.z = simulationHeight - 2f;
+                    vel.z *= -0.5f;
                 }
-                else if (pos.z > simulationHeight - 2f)
-                {
-                    pos.z = simulationHeight - 2f;
-                    vel.z *= -1f;
-                }
-
-                particlePositions[i] = pos;
+                
+                // Valores finais
+                particlePositions[i] = newPos;
                 particleVelocities[i] = vel;
             }
-        }
-        void AddTestVelocity()
-        {
-            // Adiciona um vortex
-            int centerX = simulationWidth / 2;
-            int centerZ = simulationHeight / 2;
-            int middleY = gridHeight / 2;
-            
-            for (int x = 1; x < simulationWidth - 1; x++)
-            {
-                for (int z = 1; z < simulationHeight - 1; z++)
-                {
-                    // Calcula o vetor pelo centro
-                    float dx = x - centerX;
-                    float dz = z - centerZ;
-                    float distance = Mathf.Sqrt(dx * dx + dz * dz);
-                    
-                    if (distance < 10f && distance > 0.1f)
-                    {
-                        // Cria um espaço circular
-                        Vector3 velocity = new Vector3(-dz, 0, dx).normalized * 2f;
-                        grid.AddVelocity(x, middleY, z, velocity);
-                        
-                        // Adiciona densidade
-                        grid.AddDensity(x, middleY, z, 1f);
-                    }
-                }
-            }
-        }
-        
-        
+        }       
         void OnDestroy()
         {
             particlePositionsBuffer?.Release();

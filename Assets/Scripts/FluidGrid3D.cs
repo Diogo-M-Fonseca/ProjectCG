@@ -371,18 +371,38 @@ namespace CGProject
 
         void EnforceBoundary()
         {
-            for (int x = 0; x < sizeX; x++)
-                for (int z = 0; z < sizeZ; z++)
-                {
-                    velocity[x, 0, z] = Vector3.zero; 
-                    velocity[x, sizeY - 1, z] = Vector3.zero;
-                }
             for (int y = 0; y < sizeY; y++)
+            {
                 for (int z = 0; z < sizeZ; z++)
                 {
+                    // Paredes da esquerda e direita
                     velocity[0, y, z] = Vector3.zero;
                     velocity[sizeX - 1, y, z] = Vector3.zero;
                 }
+            }
+            
+            // Paredes frente e trás
+            for (int x = 0; x < sizeX; x++)
+            {
+                for (int y = 0; y < sizeY; y++)
+                {
+                    velocity[x, y, 0] = Vector3.zero;
+                    velocity[x, y, sizeZ - 1] = Vector3.zero;
+                }
+            }
+            
+            // Fundo
+            for (int x = 0; x < sizeX; x++)
+            {
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    velocity[x, 0, z] = new Vector3(
+                        velocity[x, 0, z].x,
+                        0,
+                        velocity[x, 0, z].z
+                    );
+                }
+            }
         }
     }
 }
