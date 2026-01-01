@@ -21,7 +21,9 @@ namespace CGProject
         [SerializeField] private float particleSize = 0.1f;
         [SerializeField] private Material particleMaterial;
         [SerializeField] private int meshResolution = 1;
-        
+        [SerializeField] private float particleMass = 1.0f;
+        private List<int> tempNearby = new List<int>(64);
+
         [Header("SPH Parameters")]
         [SerializeField] private float pressureMultiplier = 100.0f; // Aumentado
         [SerializeField] private float targetDensity = 25.0f;      // Aumentado
@@ -436,8 +438,8 @@ namespace CGProject
                 particleMesh,
                 0,
                 particleMaterial,
-                new Bounds(Vector3.zero, Vector3.one * 1000f),
-                particleCount);
+                new Bounds(new Vector3(simulationWidth, gridHeight, simulationHeight) * 0.5f, new Vector3(simulationWidth, gridHeight, simulationHeight)),
+                particleCount); 
         }
 
         void UpdateParticles(float dt)
@@ -450,7 +452,7 @@ namespace CGProject
             CalculatePressureForcesSPH();
             
             // Aplica repulsão artificial se habilitada
-            if (useArtificialRepulsion)
+            if(useArtificialRepulsion)
             {
                 ApplyArtificialRepulsion(dt);
             }
@@ -484,42 +486,33 @@ namespace CGProject
 
         List<int> GetParticlesInRadius(Vector3 position, float radius)
         {
-            List<int> nearbyParticles = new List<int>();
+            tempNearby.Clear();
             float radiusSq = radius * radius;
-            
+
             int gridX = Mathf.Clamp((int)(position.x / spatialCellSize), 0, gridCellsX - 1);
             int gridY = Mathf.Clamp((int)(position.y / spatialCellSize), 0, gridCellsY - 1);
             int gridZ = Mathf.Clamp((int)(position.z / spatialCellSize), 0, gridCellsZ - 1);
-            
-            // Verifica células próximas (3x3x3)
+
             for (int x = -1; x <= 1; x++)
-            {
                 for (int y = -1; y <= 1; y++)
-                {
                     for (int z = -1; z <= 1; z++)
                     {
-                        int checkX = gridX + x;
-                        int checkY = gridY + y;
-                        int checkZ = gridZ + z;
-                        
-                        if (checkX >= 0 && checkX < gridCellsX &&
-                            checkY >= 0 && checkY < gridCellsY &&
-                            checkZ >= 0 && checkZ < gridCellsZ)
+                        int cx = gridX + x;
+                        int cy = gridY + y;
+                        int cz = gridZ + z;
+
+                        if (cx < 0 || cy < 0 || cz < 0 ||
+                            cx >= gridCellsX || cy >= gridCellsY || cz >= gridCellsZ)
+                            continue;
+
+                        foreach (int j in spatialGrid[cx, cy, cz])
                         {
-                            foreach (int particleIndex in spatialGrid[checkX, checkY, checkZ])
-                            {
-                                Vector3 delta = position - particlePositions[particleIndex];
-                                if (delta.sqrMagnitude < radiusSq)
-                                {
-                                    nearbyParticles.Add(particleIndex);
-                                }
-                            }
+                            if ((particlePositions[j] - position).sqrMagnitude < radiusSq)
+                                tempNearby.Add(j);
                         }
                     }
-                }
-            }
-            
-            return nearbyParticles;
+
+            return tempNearby;
         }
 
         // Funções de kernel SPH
@@ -583,11 +576,11 @@ namespace CGProject
                     if (distSq < radiusSq)
                     {
                         float dist = Mathf.Sqrt(distSq);
-                        density += SmoothingKernel(dist, radius);
+                        density += particleMass * SmoothingKernel(dist, radius);
                     }
                 }
-                
-                density += SmoothingKernel(0, radius);
+
+                density += particleMass * SmoothingKernel(0, radius); ;
                 densities[i] = Mathf.Max(density, 0.001f);
             }
         }
@@ -626,8 +619,8 @@ namespace CGProject
                         
                         float sharedPressure = (pressureI + pressureJ) * 0.5f;
                         float slope = SmoothingKernelDerivative(dist, radius);
-                        pressureForce += dir * sharedPressure * slope / Mathf.Max(densityJ, 0.001f);
-                        
+                        pressureForce -= dir * sharedPressure * slope / Mathf.Max(densityJ, 0.001f);
+
                         Vector3 velJ = particleVelocities[j];
                         viscosityForce += (velJ - velI) * ViscosityKernel(dist, radius);
                     }
@@ -641,23 +634,26 @@ namespace CGProject
         void ApplyArtificialRepulsion(float dt)
         {
             float minDistance = repulsionRadius;
-            
+
             for (int i = 0; i < particleCount; i++)
             {
+                if (densities[i] < targetDensity * 1.2f)
+                    continue;
+
                 List<int> nearby = GetParticlesInRadius(particlePositions[i], minDistance * 2f);
-                
+
                 foreach (int j in nearby)
                 {
                     if (i >= j) continue;
-                    
+
                     Vector3 delta = particlePositions[i] - particlePositions[j];
                     float dist = delta.magnitude;
-                    
+
                     if (dist < minDistance && dist > 0.001f)
                     {
                         Vector3 dir = delta / dist;
                         float force = repulsionStrength * (1f - dist / minDistance);
-                        
+
                         particleVelocities[i] += dir * force * dt;
                         particleVelocities[j] -= dir * force * dt;
                     }
@@ -668,16 +664,20 @@ namespace CGProject
         void UpdateParticleSPH(int i, float dt)
         {
             Vector3 pos = particlePositions[i];
-            
-            Vector3 samplePos = new Vector3(
-                Mathf.Clamp(pos.x, 1, simulationWidth - 2),
-                Mathf.Clamp(pos.y, 1, gridHeight - 2),
-                Mathf.Clamp(pos.z, 1, simulationHeight - 2)
+
+            float invCellSize = 1f / grid.GetCellSize();
+
+            Vector3 samplePos = pos * invCellSize;
+
+            samplePos = new Vector3(
+                Mathf.Clamp(samplePos.x, 1, simulationWidth - 2),
+                Mathf.Clamp(samplePos.y, 1, gridHeight - 2),
+                Mathf.Clamp(samplePos.z, 1, simulationHeight - 2)
             );
 
             Vector3 fluidVelocity = grid.SampleVelocity(samplePos);
-            Vector3 acceleration = fluidVelocity * gridVelocityInfluence;
-            
+            Vector3 acceleration = (fluidVelocity - particleVelocities[i]) * gridVelocityInfluence;
+
             // Adiciona força SPH
             acceleration += pressureForces[i];
 

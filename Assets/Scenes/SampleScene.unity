@@ -151,10 +151,11 @@ MonoBehaviour:
   simulationWidth: 32
   simulationHeight: 16
   gridHeight: 32
-  particleCount: 1000
+  particleCount: 2000
   particleSize: 0.5
   particleMaterial: {fileID: 2100000, guid: 09cceb312df077e45a42e9f94395d000, type: 2}
   meshResolution: 1
+  particleMass: 1
   pressureMultiplier: 200
   targetDensity: 30
   smoothingRadius: 0.8
