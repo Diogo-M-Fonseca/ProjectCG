@@ -68,10 +68,12 @@ namespace CGProject
             // Aplica viscosidade
             ApplyViscosity(dt);
             // Forçar a não comprimir
-            Project();    
+            Project();  
+            // Força as particulas a manterem se dentro da caixa
+            EnforceBoundary();
             // Mover densidade pelo campo de velocidade
             AdvectDensity(dt);
-            // Força as partículas a manterem se dentro da caixa
+            // Força as partículas a manterem se dentro da caixa... again
             EnforceBoundary();
         }
 
@@ -82,17 +84,20 @@ namespace CGProject
         /// </summary>
         void AdvectVelocity(float dt)
         {
+            Vector3[,,] vel0 = velocity;
+
             for (int x = 1; x < sizeX - 1; x++)
                 for (int y = 1; y < sizeY - 1; y++)
                     for (int z = 1; z < sizeZ - 1; z++)
                     {
                         // posição atual da cell na grid
                         Vector3 pos = new Vector3(x, y, z);
-                        // através da velocidade atual verificar posição anterior
-                        Vector3 prev = pos - velocity[x, y, z] * dt;
+                        // através da velocidade atual verificar posição anterior,
+                        // dividr por tamanho de cell para garantir que podemos aumentar e diminuir o tamanho mais tarde
+                        Vector3 prev = pos - vel0[x, y, z] * dt/cellSize;
 
                         // fazer sample da velocidade da ultima posição
-                        velocityTemp[x, y, z] = SampleVelocity(prev);
+                        velocityTemp[x, y, z] = SampleVelocityLimited(vel0, prev);
                     }
             // ping-pong
             Swap(ref velocity, ref velocityTemp);
@@ -109,7 +114,7 @@ namespace CGProject
                     for (int z = 1; z < sizeZ - 1; z++)
                     {
                         Vector3 pos = new Vector3(x, y, z);
-                        Vector3 prev = pos - velocity[x, y, z] * dt * velocityScale;
+                        Vector3 prev = pos - velocity[x, y, z] * dt * velocityScale / cellSize;
 
                         densityTemp[x, y, z] = SampleDensity(prev);
                     }
@@ -158,8 +163,10 @@ namespace CGProject
 
             // metodo de Jacobi para a equação de Poisson
             for (int i = 0; i < _PressureIT; i++)
+            {
+                ApplyPressureBoundary();
                 JacobiPressure();
-
+            }
             SubtractPressureGradient();
         }
 
@@ -175,8 +182,8 @@ namespace CGProject
                 for (int y = 1; y < sizeY - 1; y++)
                     for (int z = 1; z < sizeZ - 1; z++)
                     {
-                        divergence[x, y, z] =
-                            (velocity[x + 1, y, z].x - velocity[x - 1, y, z].x +
+                        divergence[x, y, z] = -(
+                             velocity[x + 1, y, z].x - velocity[x - 1, y, z].x +
                              velocity[x, y + 1, z].y - velocity[x, y - 1, z].y +
                              velocity[x, y, z + 1].z - velocity[x, y, z - 1].z) * scale;
                     }
@@ -197,7 +204,6 @@ namespace CGProject
                              pressure[x, y, z + 1] + pressure[x, y, z - 1] -
                              divergence[x, y, z]) / 6f;
                     }
-            ApplyPressureBoundary();
         }
 
         /// <summary>
@@ -245,6 +251,31 @@ namespace CGProject
                 velocity[x0, y1, z0], velocity[x1, y1, z0],
                 velocity[x0, y0, z1], velocity[x1, y0, z1],
                 velocity[x0, y1, z1], velocity[x1, y1, z1],
+                tx, ty, tz
+            );
+        }
+
+        Vector3 SampleVelocityLimited(Vector3[,,] field, Vector3 p)
+        {
+            p = ClampPosition(p);
+
+            int x0 = Mathf.FloorToInt(p.x);
+            int y0 = Mathf.FloorToInt(p.y);
+            int z0 = Mathf.FloorToInt(p.z);
+
+            int x1 = x0 + 1;
+            int y1 = y0 + 1;
+            int z1 = z0 + 1;
+
+            float tx = p.x - x0;
+            float ty = p.y - y0;
+            float tz = p.z - z0;
+
+            return Trilerp(
+                field[x0, y0, z0], field[x1, y0, z0],
+                field[x0, y1, z0], field[x1, y1, z0],
+                field[x0, y0, z1], field[x1, y0, z1],
+                field[x0, y1, z1], field[x1, y1, z1],
                 tx, ty, tz
             );
         }
@@ -331,8 +362,8 @@ namespace CGProject
             {
                 for (int z = 0; z < sizeZ; z++)
                 {
-                    velocity[0, y, z] = Vector3.zero;
-                    velocity[sizeX - 1, y, z] = Vector3.zero;
+                    velocity[0, y, z] = new Vector3(0,velocity[1, y, z].y, velocity[1,y,z].z);
+                    velocity[sizeX - 1, y, z] = new Vector3(0, velocity[sizeX - 2, y, z].y, velocity[sizeX - 2, y, z].z);
                     
                     density[0, y, z] = density[1, y, z];
                     density[sizeX - 1, y, z] = density[sizeX - 2, y, z];
@@ -344,8 +375,8 @@ namespace CGProject
             {
                 for (int y = 0; y < sizeY; y++)
                 {
-                    velocity[x, y, 0] = Vector3.zero;
-                    velocity[x, y, sizeZ - 1] = Vector3.zero;
+                    velocity[x, y, 0] = new Vector3(velocity[x,y,1].x, velocity[x,y,1].y, 0);
+                    velocity[x, y, sizeZ - 1] = new Vector3(velocity[x,y,sizeZ - 2].x, velocity[x,y,sizeZ - 2].y, 0);
                     
                     density[x, y, 0] = density[x, y, 1];
                     density[x, y, sizeZ - 1] = density[x, y, sizeZ - 2];
