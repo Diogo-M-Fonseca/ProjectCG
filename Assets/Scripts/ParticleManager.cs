@@ -22,13 +22,13 @@ namespace CGProject
         private List<int> tempNearby = new List<int>(64); // Lista temporária para partículas próximas
 
         [Header("SPH Settings")]
-        [SerializeField] private float pressureMultiplier = 300.0f; // Multiplicador da força de pressão
+        [SerializeField] private float pressureMultiplier = 50.0f; // Multiplicador da força de pressão
         [SerializeField] private float targetDensity = 20.0f; // Densidade alvo para o fluido
         [SerializeField] private float smoothingRadius = 0.4f; // Raio de suavização para os cálculos SPH
         [SerializeField] private float viscosityStrength = 1.0f; // Força da viscosidade
 
         [Header("Movement Settings")]
-        [SerializeField] private float damping = 0.98f; // Amortecimento da velocidade
+        [SerializeField] private float damping = 0.99f; // Amortecimento da velocidade
         [SerializeField] private float maxSpeed = 8.0f; // Velocidade máxima das partículas
         [SerializeField] private float particleGravityScale = 1.0f; // Escala da gravidade aplicada às partículas
         [SerializeField] private float velocityThreshold = 0.02f; // Limiar para considerar partícula em movimento
@@ -40,8 +40,8 @@ namespace CGProject
 
         [Header("Repulsion Settings")]
         [SerializeField] private bool useArtificialRepulsion = true; // Ativa repulsão artificial
-        [SerializeField] private float repulsionStrength = 80.0f; // Força da repulsão artificial
-        [SerializeField] private float repulsionRadius = 0.15f; // Raio da repulsão artificial
+        [SerializeField]private float repulsionStrength = 15.0f; // Força da repulsão artificial
+        [SerializeField]private float repulsionRadius = 0.2f; // Raio da repulsão artificial
 
         // Valores em cache para comparação de parâmetros
         private float lastPressureMultiplier;
@@ -198,13 +198,27 @@ namespace CGProject
         {
             float dt = Time.deltaTime;
 
+            CheckParameterChanges();
+
+            UpdateSpatialGrid();
+
+            CalculateDensitiesSPH();
+
+            CalculatePressureForcesSPH();
+
+            if (useArtificialRepulsion)
+                ApplyArtificialRepulsion(dt);
+
             TransferParticlesToGrid();
 
             grid.Step(dt);
 
             TransferGridToParticles();
 
-            AdvectParticles(dt);
+            for (int i = 0; i<particleCount; i++)
+            {
+                UpdateParticleSPH(i, dt);
+            }
 
             particlePositionsBuffer.SetData(particlePositions);
             particleVelocitiesBuffer.SetData(particleVelocities);
@@ -218,45 +232,6 @@ namespace CGProject
                 particleCount);
         }
 
-        /*void Update()
-        {
-            // Verifica alterações de parâmetros a cada frame
-            CheckParameterChanges();
-            
-            // Usa um delta time limitado para estabilidade
-            float dt = Mathf.Min(Time.deltaTime, 0.033f);
-            
-            // Atualiza a grelha de fluido
-            if (grid != null)
-            {
-                grid.Step(dt);
-            }
-
-            // Atualiza as partículas
-            UpdateParticles(dt);
-
-            // Atualiza os buffers para renderização
-            particlePositionsBuffer.SetData(particlePositions);
-            particleVelocitiesBuffer.SetData(particleVelocities);
-
-            // Desenha as partículas
-            Graphics.DrawMeshInstancedProcedural(
-                particleMesh,
-                0,
-                particleMaterial,
-                new Bounds(new Vector3(simulationWidth, gridHeight, simulationHeight) * 0.5f, 
-                          new Vector3(simulationWidth, gridHeight, simulationHeight)),
-                particleCount);
-        }*/
-
-        void AdvectParticles(float dt)
-        {
-            for (int i = 0; i < particleCount; i++)
-            {
-                particlePositions[i] += particleVelocities[i] * dt;
-                HandleWallCollisions(ref particlePositions[i], ref particleVelocities[i]);
-            }
-        }
 
         /*void UpdateParticles(float dt)
         {
@@ -341,34 +316,36 @@ namespace CGProject
         float SmoothingKernel(float distance, float radius)
         {
             // Kernel polinomial padrão para SPH
-            if (distance >= radius) return 0;
+            if (distance >= radius) return 0f;
 
+            float r2 = distance * distance;
             float r = radius;
-            float value = r * r - distance * distance;
-            return 315f / (64f * Mathf.PI * Mathf.Pow(r, 9)) * value * value * value;
+            float factor = 315f / (64f * Mathf.PI * Mathf.Pow(r, 9));
+            return factor * Mathf.Pow(r * r - r2, 3);
         }
 
         float SmoothingKernelDerivative(float distance, float radius)
         {
             // Derivada do kernel polinomial
-            if (distance >= radius) return 0;
-            if (distance < 0.0001f) return 0; // Evita divisão por zero
+            if (distance >= radius || distance < 0.0001f) return 0f;
 
             float r = radius;
-            float value = r - distance;
-            return -45f / (Mathf.PI * Mathf.Pow(r, 6)) * value * value;
+            float factor = 45f / (Mathf.PI * Mathf.Pow(r, 6));
+            float x = r - distance;
+            return factor * x * x;
         }
 
         float ViscosityKernel(float distance, float radius)
         {
             // Kernel para viscosidade
-            if (distance >= radius) return 0;
+            if (distance >= radius) return 0f;
 
             float r = radius;
-            return 45f / (Mathf.PI * Mathf.Pow(r, 6)) * (r - distance);
+            float factor = 45f / (Mathf.PI * Mathf.Pow(r, 6));
+            return factor * (r - distance);
         }
 
-        /*void CalculateDensitiesSPH()
+        void CalculateDensitiesSPH()
         {
             // Calcula densidades usando o método SPH
             float radius = smoothingRadius;
@@ -453,9 +430,9 @@ namespace CGProject
                 pressureForces[i] = (pressureForce / Mathf.Max(densityI, 0.001f)) +
                                    (viscosityForce * viscosityStrength / Mathf.Max(densityI, 0.001f));
             }
-        }*/
+        }
 
-        /*void ApplyArtificialRepulsion(float dt)
+        void ApplyArtificialRepulsion(float dt)
         {
             // Aplica força de repulsão artificial
             if (!useArtificialRepulsion) return;
@@ -483,14 +460,14 @@ namespace CGProject
                         float force = repulsionStrength * (1f - dist / minDistance);
 
                         // Aplica força em direções opostas
-                        particleVelocities[i] += dir * force * dt;
-                        particleVelocities[j] -= dir * force * dt;
+                        particleVelocities[i] += dir * force * dt * 0.5f;
+                        particleVelocities[j] -= dir * force * dt * 0.5f;
                     }
                 }
             }
-        }*/
+        }
 
-        /*void UpdateParticleSPH(int i, float dt)
+        void UpdateParticleSPH(int i, float dt)
         {
             // Atualiza uma partícula individual usando SPH
             Vector3 pos = particlePositions[i];
@@ -500,7 +477,9 @@ namespace CGProject
             
             // Adiciona forças SPH
             acceleration += pressureForces[i];
-            
+            if (acceleration.magnitude > 50f)
+                acceleration = acceleration.normalized * 50f;
+
             // Atualiza velocidade usando aceleração
             particleVelocities[i] += acceleration * dt;
             
@@ -521,7 +500,7 @@ namespace CGProject
             HandleWallCollisions(ref newPos, ref particleVelocities[i]);
             
             particlePositions[i] = newPos;
-        }*/
+        }
 
         void HandleWallCollisions(ref Vector3 position, ref Vector3 velocity)
         {
