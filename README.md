@@ -80,3 +80,5 @@ Foram exploradas tentativas de limitar artificialmente a densidade máxima, sem 
 
 ## Fontes
 
+https://pages.cs.wisc.edu/~chaol/data/cs777/stam-stable_fluids.pdf - Stable Fluids (1999) - Jos Stam
+https://www.youtube.com/watch?v=rSKMYc1CQHE                        - Simulating Fluids -  Sebastian Lague

@@ -128,7 +128,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 218609955}
-  - component: {fileID: 218609954}
+  - component: {fileID: 218609956}
   m_Layer: 0
   m_Name: GameObject
   m_TagString: Untagged
@@ -136,42 +136,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &218609954
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 218609953}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 65febe6e9d6e3df4fa27636cb3c1250b, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  simulationWidth: 64
-  simulationHeight: 64
-  gridHeight: 16
-  particleCount: 5000
-  particleSize: 0.1
-  particleMaterial: {fileID: 2100000, guid: 09cceb312df077e45a42e9f94395d000, type: 2}
-  meshResolution: 1
-  particleMass: 1
-  pressureMultiplier: 5
-  targetDensity: 25
-  smoothingRadius: 0.5
-  viscosityStrength: 0.5
-  gridVelocityInfluence: 2
-  damping: 0.99
-  maxSpeed: 8
-  particleGravityScale: 1
-  initialVelocityStrength: 3
-  initializationMethod: 0
-  wallBounce: 0.7
-  wallFriction: 0.92
-  wallMargin: 0.5
-  useArtificialRepulsion: 0
-  repulsionStrength: 80
-  repulsionRadius: 0.15
 --- !u!4 &218609955
 Transform:
   m_ObjectHideFlags: 0
@@ -187,6 +151,40 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &218609956
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 218609953}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 65febe6e9d6e3df4fa27636cb3c1250b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  simulationWidth: 8
+  simulationHeight: 8
+  gridHeight: 16
+  particleCount: 2000
+  particleSize: 0.1
+  particleMaterial: {fileID: 2100000, guid: 09cceb312df077e45a42e9f94395d000, type: 2}
+  meshResolution: 1
+  particleMass: 1
+  pressureMultiplier: 70
+  targetDensity: 25
+  smoothingRadius: 0.4
+  viscosityStrength: 0.5
+  damping: 0.99
+  maxSpeed: 8
+  particleGravityScale: 1
+  velocityThreshold: 0.02
+  wallBounce: 0.3
+  wallFriction: 0.9
+  wallMargin: 0.5
+  useArtificialRepulsion: 1
+  repulsionStrength: 80
+  repulsionRadius: 0.15
 --- !u!1 &606476146
 GameObject:
   m_ObjectHideFlags: 0
