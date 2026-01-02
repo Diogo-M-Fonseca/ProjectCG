@@ -14,6 +14,11 @@ namespace CGProject
         // Buffer temporário de velocidade para Advection
         private Vector3[,,] velocityTemp;
 
+        // Velocidade no ultimo "Step"
+        private Vector3[,,] velocityPrev;
+        // Peso das particulas em cada Cell
+        private float[,,] weight;           
+
         // Densidade
         private float[,,] density;
         // Buffer temporário de densidade
@@ -47,6 +52,9 @@ namespace CGProject
             velocity = new Vector3[x, y, z];
             velocityTemp = new Vector3[x, y, z];
 
+            velocityPrev = new Vector3[x, y, z];
+            weight = new float[x, y, z];
+
             density = new float[x, y, z];
             densityTemp = new float[x, y, z];
 
@@ -67,6 +75,7 @@ namespace CGProject
         /// </summary>
         public void Step(float dt)
         {
+            System.Array.Copy(velocity, velocityPrev, velocity.Length);
             // Transporta velocidade e densidade (termo -(u·∇)u de Navier-Stokes)
             AdvectVelocity(dt);
             AdvectDensity(dt);
@@ -251,7 +260,7 @@ namespace CGProject
         /// <summary>
         /// Amostra a velocidade em uma posição específica (coordenadas da grelha)
         /// </summary>
-        Vector3 SampleVelocityAtPosition(Vector3 localPos)
+        Vector3 SampleVelocityAtPosition(Vector3 localPos, Vector3[,,] field)
         {
             // Garante que está dentro dos limites
             localPos.x = Mathf.Clamp(localPos.x, 0, sizeX - 1.001f);
@@ -281,6 +290,14 @@ namespace CGProject
                 velocity[x0, y1, z1], velocity[x1, y1, z1],
                 tx, ty, tz
             );
+        }
+
+        /// <summary>
+        /// Overload para poder continuar a usar SampleVelocityAtPosition com só um parametro
+        /// </summary>
+        Vector3 SampleVelocityAtPosition(Vector3 localPos)
+        { 
+            return SampleVelocityAtPosition(localPos, velocity);
         }
 
         /// <summary>
@@ -575,6 +592,17 @@ namespace CGProject
         {
             Vector3 localPos = worldPos - origin;
             return SampleDensityAtPosition(localPos);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="worldPos"></param>
+        /// <returns></returns>
+        public Vector3 SamplePreviousVelocity(Vector3 worldPos)
+        {
+            Vector3 localPos = worldPos - origin;
+            return SampleVelocityAtPosition(localPos, velocityPrev);
         }
     }
 }

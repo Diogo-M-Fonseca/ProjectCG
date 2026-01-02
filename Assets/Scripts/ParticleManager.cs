@@ -11,6 +11,7 @@ namespace CGProject
         [SerializeField] private int simulationWidth = 16;
         [SerializeField] private int simulationHeight = 16;
         [SerializeField] private int gridHeight = 16;
+        [SerializeField, Range(0, 1)] float flipBlend = 0.95f; // 0 = PIC, 1 = FLIP
 
         [Header("Particle Settings")]
         [SerializeField] private int particleCount = 1000;
@@ -193,7 +194,31 @@ namespace CGProject
             }
         }
 
-        void Update()
+        private void Update()
+        {
+            float dt = Time.deltaTime;
+
+            TransferParticlesToGrid();
+
+            grid.Step(dt);
+
+            TransferGridToParticles();
+
+            AdvectParticles(dt);
+
+            particlePositionsBuffer.SetData(particlePositions);
+            particleVelocitiesBuffer.SetData(particleVelocities);
+
+            Graphics.DrawMeshInstancedProcedural(
+                particleMesh,
+                0,
+                particleMaterial,
+                new Bounds(new Vector3(simulationWidth, gridHeight, simulationHeight) * 0.5f,
+                          new Vector3(simulationWidth, gridHeight, simulationHeight)),
+                particleCount);
+        }
+
+        /*void Update()
         {
             // Verifica alterações de parâmetros a cada frame
             CheckParameterChanges();
@@ -222,9 +247,18 @@ namespace CGProject
                 new Bounds(new Vector3(simulationWidth, gridHeight, simulationHeight) * 0.5f, 
                           new Vector3(simulationWidth, gridHeight, simulationHeight)),
                 particleCount);
+        }*/
+
+        void AdvectParticles(float dt)
+        {
+            for (int i = 0; i < particleCount; i++)
+            {
+                particlePositions[i] += particleVelocities[i] * dt;
+                HandleWallCollisions(ref particlePositions[i], ref particleVelocities[i]);
+            }
         }
 
-        void UpdateParticles(float dt)
+        /*void UpdateParticles(float dt)
         {
             // Atualiza a grelha espacial com as novas posições
             UpdateSpatialGrid();
@@ -246,7 +280,7 @@ namespace CGProject
             {
                 UpdateParticleSPH(i, dt);
             }
-        }
+        }*/
 
         void UpdateSpatialGrid()
         {
@@ -334,7 +368,7 @@ namespace CGProject
             return 45f / (Mathf.PI * Mathf.Pow(r, 6)) * (r - distance);
         }
 
-        void CalculateDensitiesSPH()
+        /*void CalculateDensitiesSPH()
         {
             // Calcula densidades usando o método SPH
             float radius = smoothingRadius;
@@ -368,7 +402,7 @@ namespace CGProject
                 densities[i] = Mathf.Max(density, 0.001f);
             }
         }
-
+        
         void CalculatePressureForcesSPH()
         {
             // Calcula forças de pressão e viscosidade usando SPH
@@ -419,9 +453,9 @@ namespace CGProject
                 pressureForces[i] = (pressureForce / Mathf.Max(densityI, 0.001f)) +
                                    (viscosityForce * viscosityStrength / Mathf.Max(densityI, 0.001f));
             }
-        }
+        }*/
 
-        void ApplyArtificialRepulsion(float dt)
+        /*void ApplyArtificialRepulsion(float dt)
         {
             // Aplica força de repulsão artificial
             if (!useArtificialRepulsion) return;
@@ -454,9 +488,9 @@ namespace CGProject
                     }
                 }
             }
-        }
+        }*/
 
-        void UpdateParticleSPH(int i, float dt)
+        /*void UpdateParticleSPH(int i, float dt)
         {
             // Atualiza uma partícula individual usando SPH
             Vector3 pos = particlePositions[i];
@@ -487,7 +521,7 @@ namespace CGProject
             HandleWallCollisions(ref newPos, ref particleVelocities[i]);
             
             particlePositions[i] = newPos;
-        }
+        }*/
 
         void HandleWallCollisions(ref Vector3 position, ref Vector3 velocity)
         {
@@ -547,6 +581,69 @@ namespace CGProject
             position.y = Mathf.Clamp(position.y, 0, gridHeight);
             position.z = Mathf.Clamp(position.z, 0, simulationHeight);
         }
+
+        /// <summary>
+        /// Passa as velocidades das p+articulas pra grid (PIC/FLIP)
+        /// </summary>
+        void TransferParticlesToGrid()
+        {
+            Vector3Int size = grid.GetGridSize();
+            for (int x = 0; x < size.x; x++)
+                for (int y = 0; y < size.y; y++)
+                    for (int z = 0; z < size.z; z++)
+                    {
+                        grid.SetVelocity(x, y, z, Vector3.zero);
+                        grid.AddDensity(x, y, z, 0f);
+                    }
+
+            for (int i = 0; i < particleCount; i++)
+            {
+                Vector3 p = particlePositions[i];
+                Vector3 v = particleVelocities[i];
+
+                int x = Mathf.FloorToInt(p.x);
+                int y = Mathf.FloorToInt(p.y);
+                int z = Mathf.FloorToInt(p.z);
+
+                grid.AddVelocity(x, y, z, v);
+                grid.AddDensity(x, y, z, 1f);
+            }
+
+            for (int x = 0; x < size.x; x++)
+                for (int y = 0; y < size.y; y++)
+                    for (int z = 0; z < size.z; z++)
+                    {
+                        float d = grid.GetDensity(x, y, z);
+                        if (d > 0)
+                        {
+                            Vector3 vel = grid.GetVelocity(x, y, z);
+                            grid.SetVelocity(x, y, z, vel / d);
+                        }
+                    }
+        }
+
+        /// <summary>
+        /// Update as velocidades das particulas seguindo a grid (PIC/FLIP)
+        /// </summary>
+        void TransferGridToParticles()
+        {
+            for (int i = 0; i < particleCount; i++)
+            {
+                Vector3 p = particlePositions[i];
+
+                Vector3 vGrid = grid.SampleVelocity(p);
+                Vector3 vPrev = grid.SamplePreviousVelocity(p);
+                Vector3 dv = vGrid - vPrev;
+
+                Vector3 vPIC = vGrid;
+                Vector3 vFLIP = particleVelocities[i] + dv;
+
+                particleVelocities[i] =
+                    (1f - flipBlend) * vPIC +
+                    flipBlend * vFLIP;
+            }
+        }
+
 
         void OnDestroy()
         {
