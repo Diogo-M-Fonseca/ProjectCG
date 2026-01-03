@@ -70,9 +70,24 @@ Como tentativa de estabilização, substituiu-se a integração **Euler** por **
 
 ---
 
+## Obstáculo 5 - Método FLIP e compute shaders
+
+Para a simulação ser verdadeiramente semi-Lagrangiana, implementou-se o método FLIP para a sinergia necessária entre a grelha e as partículas ser possível, tendo um híbrido de SPH-FLIP. No entanto, por problemas de performance, mesmo implementando o método SPH, é necessário o uso de dois compute shaders, um para o calculo SPH e outro para a própria grelha.
+
+Com a passagem das variáveis para os compute shaders, a simulação estabilizou bastante, a perda de FPS deixou de ser um problema
+
+### Problemas encontrados
+
+- As partículas que previamente comportavam-se como fluidos, estabilizando no fundo da simulação com certos parâmetros definidos (após o obstáculo 4), estavam agora a flutuar ou a escalar as paredes mais uma vez.
+
+- Após trocar alguns parâmetros, as partículas apenas caem como areia e juntam-se no fundo da simulação
+
+
 ## Conclusão
 
 A simulação apresenta um comportamento funcional e visualmente coerente com cerca de **duas mil partículas**. Contudo, ao aumentar este número, a densidade do sistema cresce significativamente, originando instabilidades, que, após alguma pesquisa, verifica-se ser um problema comum em implementações de **Smoothed Particle Hydrodynamics**.
+
+Desta forma, o SPH calcula as interações locais das partículas (pressão e viscosidade), envia para a grelha que resolve a incompressibilidade e retorna para as partículas com os seus parâmetros.
 
 Foram exploradas tentativas de limitar artificialmente a densidade máxima, sem sucesso. No entanto, ao aumentar a densidade base e reduzir o multiplicador de pressão, foi possível simular um maior número de partículas com relativa estabilidade. Ainda assim, esta abordagem teve um impacto negativo no desempenho, resultando numa diminuição considerável de FPS.
 

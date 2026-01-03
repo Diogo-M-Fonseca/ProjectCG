@@ -1,0 +1,350 @@
+#pragma kernel BuildSpatialGrid
+#pragma kernel CalculateDensities
+#pragma kernel CalculatePressureForces
+#pragma kernel UpdateParticles
+
+RWStructuredBuffer<float3> particlePositions;
+RWStructuredBuffer<float3> particleVelocities;
+RWStructuredBuffer<float> densities;
+RWStructuredBuffer<float3> pressureForces;
+
+RWStructuredBuffer<int> spatialGridCells;
+RWStructuredBuffer<int> spatialGridOffsets;
+RWStructuredBuffer<int> spatialGridCounts;
+RWStructuredBuffer<int> spatialGridIndices;
+
+// SPH Parameters
+float particleMass;
+float smoothingRadius;
+float pressureMultiplier;
+float targetDensity;
+float viscosityStrength;
+float gravityScale; // <-- THIS MUST BE SET FROM UNITY!
+float dt;
+float damping;
+float maxSpeed;
+
+// Grid parameters
+uint particleCount;
+float cellSize;
+int gridCellsX;
+int gridCellsY;
+int gridCellsZ;
+float3 gridBounds;
+
+// Collision parameters
+float wallMargin;
+float wallBounce;
+float wallFriction;
+
+// Repulsion parameters
+bool useArtificialRepulsion;
+float repulsionStrength;
+float repulsionRadius;
+
+static const float PI = 3.14159265358979323846f;
+static const float GRAVITY = -9.81f;
+
+// ---------- SPH KERNELS ----------
+float SmoothingKernel(float distance, float radius) {
+    if (distance >= radius) return 0.0f;
+    
+    float r = radius;
+    float h3 = r * r * r;
+    float h6 = h3 * h3;
+    float h9 = h6 * h3;
+    
+    float r2 = distance * distance;
+    float diff = r * r - r2;
+    
+    return 315.0f / (64.0f * PI * h9) * diff * diff * diff;
+}
+
+float SmoothingKernelDerivative(float distance, float radius) {
+    if (distance >= radius) return 0.0f;
+    
+    float r = radius;
+    float h3 = r * r * r;
+    float h6 = h3 * h3;
+    
+    float diff = r - distance;
+    return 45.0f / (PI * h6) * diff * diff;
+}
+
+float ViscosityKernel(float distance, float radius) {
+    if (distance >= radius) return 0.0f;
+    
+    float r = radius;
+    float h3 = r * r * r;
+    float h6 = h3 * h3;
+    
+    return 45.0f / (PI * h6) * (r - distance);
+}
+
+// ---------- SPATIAL GRID ----------
+int GetGridCellIndex(float3 pos) {
+    int x = clamp((int)(pos.x / cellSize), 0, gridCellsX - 1);
+    int y = clamp((int)(pos.y / cellSize), 0, gridCellsY - 1);
+    int z = clamp((int)(pos.z / cellSize), 0, gridCellsZ - 1);
+    return x + y * gridCellsX + z * gridCellsX * gridCellsY;
+}
+
+// Build spatial grid
+[numthreads(256, 1, 1)]
+void BuildSpatialGrid(uint3 id : SV_DispatchThreadID) {
+    uint i = id.x;
+    if (i >= particleCount) return;
+    
+    float3 pos = particlePositions[i];
+    int cellIndex = GetGridCellIndex(pos);
+    
+    spatialGridCells[i] = cellIndex;
+    
+    int originalValue;
+    InterlockedAdd(spatialGridCounts[cellIndex], 1, originalValue);
+    
+    int offset = spatialGridOffsets[cellIndex];
+    spatialGridIndices[offset + originalValue] = (int)i;
+}
+
+// ---------- DENSITY CALCULATION ----------
+[numthreads(256, 1, 1)]
+void CalculateDensities(uint3 id : SV_DispatchThreadID) {
+    uint i = id.x;
+    if (i >= particleCount) return;
+    
+    float3 posI = particlePositions[i];
+    float density = 0.0f;
+    float radius = smoothingRadius;
+    float radiusSq = radius * radius;
+    
+    // Self-density
+    density += particleMass * SmoothingKernel(0.0f, radius);
+    
+    int cellIndex = GetGridCellIndex(posI);
+    
+    // Check neighboring cells (3x3x3)
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int cellX = (cellIndex % gridCellsX) + dx;
+                int cellY = (cellIndex / gridCellsX) % gridCellsY + dy;
+                int cellZ = cellIndex / (gridCellsX * gridCellsY) + dz;
+                
+                if (cellX < 0 || cellX >= gridCellsX ||
+                    cellY < 0 || cellY >= gridCellsY ||
+                    cellZ < 0 || cellZ >= gridCellsZ) continue;
+                
+                int neighborCellIndex = cellX + cellY * gridCellsX + cellZ * gridCellsX * gridCellsY;
+                int cellCount = spatialGridCounts[neighborCellIndex];
+                int cellOffset = spatialGridOffsets[neighborCellIndex];
+                
+                for (int j = 0; j < cellCount; j++) {
+                    int particleIdx = spatialGridIndices[cellOffset + j];
+                    if (particleIdx == (int)i) continue;
+                    
+                    float3 posJ = particlePositions[particleIdx];
+                    float3 delta = posI - posJ;
+                    float distSq = dot(delta, delta);
+                    
+                    if (distSq < radiusSq) {
+                        float dist = sqrt(distSq);
+                        density += particleMass * SmoothingKernel(dist, radius);
+                    }
+                }
+            }
+        }
+    }
+    
+    densities[i] = max(density, 0.001f);
+}
+
+// ---------- PRESSURE & VISCOSITY FORCES ----------
+[numthreads(256, 1, 1)]
+void CalculatePressureForces(uint3 id : SV_DispatchThreadID) {
+    uint i = id.x;
+    if (i >= particleCount) return;
+    
+    float3 posI = particlePositions[i];
+    float3 velI = particleVelocities[i];
+    float densityI = densities[i];
+    float pressureI = max(0.0f, densityI - targetDensity) * pressureMultiplier;
+    
+    float3 pressureForce = float3(0, 0, 0);
+    float3 viscosityForce = float3(0, 0, 0);
+    
+    float radius = smoothingRadius;
+    float radiusSq = radius * radius;
+    
+    int cellIndex = GetGridCellIndex(posI);
+    
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int cellX = (cellIndex % gridCellsX) + dx;
+                int cellY = (cellIndex / gridCellsX) % gridCellsY + dy;
+                int cellZ = cellIndex / (gridCellsX * gridCellsY) + dz;
+                
+                if (cellX < 0 || cellX >= gridCellsX ||
+                    cellY < 0 || cellY >= gridCellsY ||
+                    cellZ < 0 || cellZ >= gridCellsZ) continue;
+                
+                int neighborCellIndex = cellX + cellY * gridCellsX + cellZ * gridCellsX * gridCellsY;
+                int cellCount = spatialGridCounts[neighborCellIndex];
+                int cellOffset = spatialGridOffsets[neighborCellIndex];
+                
+                for (int j = 0; j < cellCount; j++) {
+                    int particleIdx = spatialGridIndices[cellOffset + j];
+                    if (particleIdx == (int)i) continue;
+                    
+                    float3 posJ = particlePositions[particleIdx];
+                    float3 delta = posI - posJ;
+                    float distSq = dot(delta, delta);
+                    
+                    if (distSq < radiusSq && distSq > 0.0001f) {
+                        float dist = sqrt(distSq);
+                        float3 dir = delta / dist;
+                        
+                        float densityJ = densities[particleIdx];
+                        float pressureJ = max(0.0f, densityJ - targetDensity) * pressureMultiplier;
+                        
+                        // Symmetric pressure force
+                        float sharedPressure = (pressureI + pressureJ) * 0.5f;
+                        pressureForce -= dir * particleMass * sharedPressure / densityJ * 
+                                        SmoothingKernelDerivative(dist, radius);
+                        
+                        // Viscosity force
+                        float3 velJ = particleVelocities[particleIdx];
+                        viscosityForce += (velJ - velI) * ViscosityKernel(dist, radius) * 
+                                         particleMass / densityJ;
+                    }
+                }
+            }
+        }
+    }
+    
+    pressureForces[i] = (pressureForce / densityI) + (viscosityForce * viscosityStrength / densityI);
+}
+
+// ---------- ARTIFICIAL REPULSION ----------
+void ApplyRepulsion(uint i) {
+    if (!useArtificialRepulsion) return;
+    
+    float3 posI = particlePositions[i];
+    float3 repulsionForce = float3(0, 0, 0);
+    float minDistSq = repulsionRadius * repulsionRadius;
+    
+    int cellIndex = GetGridCellIndex(posI);
+    
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int cellX = (cellIndex % gridCellsX) + dx;
+                int cellY = (cellIndex / gridCellsX) % gridCellsY + dy;
+                int cellZ = cellIndex / (gridCellsX * gridCellsY) + dz;
+                
+                if (cellX < 0 || cellX >= gridCellsX ||
+                    cellY < 0 || cellY >= gridCellsY ||
+                    cellZ < 0 || cellZ >= gridCellsZ) continue;
+                
+                int neighborCellIndex = cellX + cellY * gridCellsX + cellZ * gridCellsX * gridCellsY;
+                int cellCount = spatialGridCounts[neighborCellIndex];
+                int cellOffset = spatialGridOffsets[neighborCellIndex];
+                
+                for (int j = 0; j < cellCount; j++) {
+                    int particleIdx = spatialGridIndices[cellOffset + j];
+                    if (particleIdx <= (int)i) continue;
+                    
+                    float3 posJ = particlePositions[particleIdx];
+                    float3 delta = posI - posJ;
+                    float distSq = dot(delta, delta);
+                    
+                    if (distSq < minDistSq && distSq > 0.0001f) {
+                        float dist = sqrt(distSq);
+                        float3 dir = delta / dist;
+                        float force = repulsionStrength * (1.0f - dist / repulsionRadius);
+                        repulsionForce += dir * force;
+                    }
+                }
+            }
+        }
+    }
+    
+    particleVelocities[i] += repulsionForce * dt;
+}
+
+// ---------- UPDATE PARTICLES ----------
+[numthreads(256, 1, 1)]
+void UpdateParticles(uint3 id : SV_DispatchThreadID) {
+    uint i = id.x;
+    if (i >= particleCount) return;
+    
+    float3 pos = particlePositions[i];
+    float3 vel = particleVelocities[i];
+    float3 force = pressureForces[i];
+    
+    // CRITICAL: ADD GRAVITY HERE (FIXED!)
+    force += float3(0, GRAVITY * gravityScale, 0); // Y is up in Unity
+    
+    // Apply artificial repulsion
+    ApplyRepulsion(i);
+    
+    // Update velocity
+    vel += force * dt;
+    
+    // Apply damping
+    vel *= pow(damping, dt * 60.0f);
+    
+    // Limit maximum speed
+    float speed = length(vel);
+    if (speed > maxSpeed) {
+        vel = vel * (maxSpeed / speed);
+    }
+    
+    // Update position
+    pos += vel * dt;
+    
+    // Wall collisions
+    // X walls
+    if (pos.x < wallMargin) {
+        pos.x = wallMargin;
+        vel.x = -vel.x * wallBounce;
+        vel.y *= wallFriction;
+        vel.z *= wallFriction;
+    } else if (pos.x > gridBounds.x - wallMargin) {
+        pos.x = gridBounds.x - wallMargin;
+        vel.x = -vel.x * wallBounce;
+        vel.y *= wallFriction;
+        vel.z *= wallFriction;
+    }
+    
+    // Y walls (TOP/BOTTOM - THIS IS WHERE GRAVITY PULLS)
+    if (pos.y < wallMargin) {
+        pos.y = wallMargin;
+        vel.y = -vel.y * wallBounce;
+        vel.x *= wallFriction;
+        vel.z *= wallFriction;
+    } else if (pos.y > gridBounds.y - wallMargin) {
+        pos.y = gridBounds.y - wallMargin;
+        vel.y = -vel.y * wallBounce;
+        vel.x *= wallFriction;
+        vel.z *= wallFriction;
+    }
+    
+    // Z walls
+    if (pos.z < wallMargin) {
+        pos.z = wallMargin;
+        vel.z = -vel.z * wallBounce;
+        vel.x *= wallFriction;
+        vel.y *= wallFriction;
+    } else if (pos.z > gridBounds.z - wallMargin) {
+        pos.z = gridBounds.z - wallMargin;
+        vel.z = -vel.z * wallBounce;
+        vel.x *= wallFriction;
+        vel.y *= wallFriction;
+    }
+    
+    // Store results
+    particlePositions[i] = pos;
+    particleVelocities[i] = vel;
+}

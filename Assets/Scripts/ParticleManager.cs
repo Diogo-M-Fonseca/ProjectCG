@@ -5,680 +5,364 @@ namespace CGProject
 {
     public class ParticleManager : MonoBehaviour
     {
-        public FluidGrid3D grid;
-
         [Header("Grid Settings")]
-        [SerializeField] private int simulationWidth = 16;
-        [SerializeField] private int simulationHeight = 16;
+        [SerializeField] private int simulationWidth = 8;
+        [SerializeField] private int simulationHeight = 8;
         [SerializeField] private int gridHeight = 16;
-        [SerializeField, Range(0, 1)] float flipBlend = 0.95f; // 0 = PIC, 1 = FLIP
+        [SerializeField, Range(0, 1)] float flipBlend = 0.95f; // High FLIP blend
 
         [Header("Particle Settings")]
-        [SerializeField] private int particleCount = 1000;
+        [SerializeField] private int particleCount = 500; // REDUCED for testing
         [SerializeField] private float particleSize = 0.1f;
         [SerializeField] private Material particleMaterial;
         [SerializeField] private int meshResolution = 1;
         [SerializeField] private float particleMass = 1.0f;
-        private List<int> tempNearby = new List<int>(64); // Lista temporária para partículas próximas
 
         [Header("SPH Settings")]
-        [SerializeField] private float pressureMultiplier = 50.0f; // Multiplicador da força de pressão
-        [SerializeField] private float targetDensity = 20.0f; // Densidade alvo para o fluido
-        [SerializeField] private float smoothingRadius = 0.4f; // Raio de suavização para os cálculos SPH
-        [SerializeField] private float viscosityStrength = 1.0f; // Força da viscosidade
+        [SerializeField] private float pressureMultiplier = 1000.0f; // DRAMATICALLY INCREASED
+        [SerializeField] private float targetDensity = 8.0f; // Increased
+        [SerializeField] private float smoothingRadius = 1.0f; // Larger
+        [SerializeField] private float viscosityStrength = 20.0f; // Increased
 
         [Header("Movement Settings")]
-        [SerializeField] private float damping = 0.99f; // Amortecimento da velocidade
-        [SerializeField] private float maxSpeed = 8.0f; // Velocidade máxima das partículas
-        [SerializeField] private float particleGravityScale = 1.0f; // Escala da gravidade aplicada às partículas
-        [SerializeField] private float velocityThreshold = 0.02f; // Limiar para considerar partícula em movimento
+        [SerializeField] private float damping = 0.98f;
+        [SerializeField] private float maxSpeed = 10.0f;
+        [SerializeField] private float particleGravityScale = 5.0f; // INCREASED
 
-        [Header("Colision Settings")]
-        [SerializeField] private float wallBounce = 0.2f; // Coeficiente de restituição nas paredes
-        [SerializeField] private float wallFriction = 0.9f; // Atrito nas paredes
-        [SerializeField] private float wallMargin = 0.5f; // Margem das paredes para colisão
+        [Header("Collision Settings")]
+        [SerializeField] private float wallBounce = 0.3f;
+        [SerializeField] private float wallFriction = 0.5f;
+        [SerializeField] private float wallMargin = 0.2f;
 
         [Header("Repulsion Settings")]
-        [SerializeField] private bool useArtificialRepulsion = true; // Ativa repulsão artificial
-        [SerializeField]private float repulsionStrength = 15.0f; // Força da repulsão artificial
-        [SerializeField]private float repulsionRadius = 0.2f; // Raio da repulsão artificial
+        [SerializeField] private bool useArtificialRepulsion = true;
+        [SerializeField] private float repulsionStrength = 200.0f; // Much stronger
+        [SerializeField] private float repulsionRadius = 0.3f;
 
-        // Valores em cache para comparação de parâmetros
-        private float lastPressureMultiplier;
-        private float lastTargetDensity;
-        private float lastSmoothingRadius;
-        private float lastRepulsionStrength;
-        private bool lastUseArtificialRepulsion;
-        
-        // Arrays de dados das partículas
+        [Header("Compute Shaders")]
+        [SerializeField] private ComputeShader sphComputeShader;
+        [SerializeField] private ComputeShader gridComputeShader;
+
+        // Compute Buffers
+        private ComputeBuffer particlePositionsBuffer;
+        private ComputeBuffer particleVelocitiesBuffer;
+        private ComputeBuffer densitiesBuffer;
+        private ComputeBuffer pressureForcesBuffer;
+
+        // Spatial grid buffers
+        private ComputeBuffer spatialGridCellsBuffer;
+        private ComputeBuffer spatialGridOffsetsBuffer;
+        private ComputeBuffer spatialGridCountsBuffer;
+        private ComputeBuffer spatialGridIndicesBuffer;
+
+        // CPU arrays
         private Vector3[] particlePositions;
         private Vector3[] particleVelocities;
         private float[] densities;
         private Vector3[] pressureForces;
 
-        // Grelha espacial para optimização
-        private List<int>[,,] spatialGrid;
+        // Rendering
+        private Mesh particleMesh;
+
+        // Grid dimensions
         private int gridCellsX, gridCellsY, gridCellsZ;
         private float spatialCellSize;
+        private int totalCells;
+        private int maxParticlesPerCell = 64;
 
-        // Buffers para renderização
-        private ComputeBuffer particlePositionsBuffer;
-        private ComputeBuffer particleVelocitiesBuffer;
-        private Mesh particleMesh;
-        
-        private const float GRAVITY = -9.81f; // Constante gravitacional
+        // Tracking
+        private bool isInitialized = false;
 
         void Start()
         {
             InitializeSimulation();
-            CacheParameters();
-        }
-
-        void CacheParameters()
-        {
-            // Armazena os valores atuais dos parâmetros para comparação
-            lastPressureMultiplier = pressureMultiplier;
-            lastTargetDensity = targetDensity;
-            lastSmoothingRadius = smoothingRadius;
-            lastRepulsionStrength = repulsionStrength;
-            lastUseArtificialRepulsion = useArtificialRepulsion;
-        }
-
-        void CheckParameterChanges()
-        {            
-            // Verifica se os parâmetros foram alterados e reinicializa se necessário
-            if (Mathf.Abs(lastPressureMultiplier - pressureMultiplier) > 0.01f)
-            {
-                lastPressureMultiplier = pressureMultiplier;
-            }
-            
-            if (Mathf.Abs(lastTargetDensity - targetDensity) > 0.01f)
-            {
-                lastTargetDensity = targetDensity;
-            }
-            
-            if (Mathf.Abs(lastSmoothingRadius - smoothingRadius) > 0.01f)
-            {
-                lastSmoothingRadius = smoothingRadius;
-                // Reinicializa a grelha espacial quando o raio muda
-                InitializeSpatialGrid();
-            }
-            
-            if (Mathf.Abs(lastRepulsionStrength - repulsionStrength) > 0.01f)
-            {
-                lastRepulsionStrength = repulsionStrength;
-            }
-            
-            if (lastUseArtificialRepulsion != useArtificialRepulsion)
-            {
-                lastUseArtificialRepulsion = useArtificialRepulsion;
-            }
         }
 
         void InitializeSimulation()
-        {            
-            // Inicializa a grelha de fluido e cria o mesh para as partículas
-            grid = new FluidGrid3D(simulationWidth, gridHeight, simulationHeight);
+        {
+            Debug.Log("Initializing Hybrid SPH-FLIP Simulation...");
+            
+            // Create particle mesh
             particleMesh = FluidGenerator.MeshGenerator(meshResolution);
 
-            // Aloca arrays para dados das partículas
+            // Initialize arrays
             particlePositions = new Vector3[particleCount];
             particleVelocities = new Vector3[particleCount];
             densities = new float[particleCount];
             pressureForces = new Vector3[particleCount];
 
-            // Inicializa estruturas
-            InitializeSpatialGrid();
+            // Initialize particles
             InitializeParticles();
+            
+            // Initialize compute buffers
+            InitializeComputeBuffers();
+            
+            // Initialize spatial grid
+            InitializeSpatialGrid();
 
-            // Cria buffers de computação para renderização
-            particlePositionsBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
-            particleVelocitiesBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
-            particlePositionsBuffer.SetData(particlePositions);
-            particleVelocitiesBuffer.SetData(particleVelocities);
-
-            // Configura o material com os buffers
+            // Setup material
             if (particleMaterial != null)
             {
                 particleMaterial.SetBuffer("_ParticlePositions", particlePositionsBuffer);
                 particleMaterial.SetBuffer("_ParticleVelocities", particleVelocitiesBuffer);
                 particleMaterial.SetFloat("_ParticleSize", particleSize);
-            }                
+            }
+            
+            Debug.Log($"Hybrid Simulation Initialized: {particleCount} particles");
+            isInitialized = true;
+        }
+
+        void InitializeComputeBuffers()
+        {
+            // Particle buffers
+            particlePositionsBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
+            particleVelocitiesBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
+            densitiesBuffer = new ComputeBuffer(particleCount, sizeof(float));
+            pressureForcesBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
+
+            // Set initial data
+            particlePositionsBuffer.SetData(particlePositions);
+            particleVelocitiesBuffer.SetData(particleVelocities);
+            densitiesBuffer.SetData(densities);
+            pressureForcesBuffer.SetData(pressureForces);
         }
 
         void InitializeSpatialGrid()
         {
-            // Configura a grelha espacial para optimizar pesquisas de vizinhança
-            spatialCellSize = smoothingRadius * 1.5f;
+            spatialCellSize = smoothingRadius * 1.2f;
             gridCellsX = Mathf.Max(1, Mathf.CeilToInt(simulationWidth / spatialCellSize));
-            gridCellsY = Mathf.Max(1, Mathf.CeilToInt(gridHeight / spatialCellSize));
+            gridCellsY = Mathf.Max(1, Mathf.CeilToInt(gridHeight / spatialCellSize)); // Z is up in your setup
             gridCellsZ = Mathf.Max(1, Mathf.CeilToInt(simulationHeight / spatialCellSize));
+            totalCells = gridCellsX * gridCellsY * gridCellsZ;
 
-            spatialGrid = new List<int>[gridCellsX, gridCellsY, gridCellsZ];
+            spatialGridCellsBuffer = new ComputeBuffer(particleCount, sizeof(int));
+            spatialGridOffsetsBuffer = new ComputeBuffer(totalCells, sizeof(int));
+            spatialGridCountsBuffer = new ComputeBuffer(totalCells, sizeof(int));
+            spatialGridIndicesBuffer = new ComputeBuffer(particleCount * maxParticlesPerCell, sizeof(int));
 
-            // Inicializa todas as células da grelha
-            for (int x = 0; x < gridCellsX; x++)
-                for (int y = 0; y < gridCellsY; y++)
-                    for (int z = 0; z < gridCellsZ; z++)
-                        spatialGrid[x, y, z] = new List<int>();
+            // Initialize offsets
+            int[] offsets = new int[totalCells];
+            for (int i = 0; i < totalCells; i++)
+            {
+                offsets[i] = i * maxParticlesPerCell;
+            }
+            spatialGridOffsetsBuffer.SetData(offsets);
         }
 
         void InitializeParticles()
         {
-            // Inicializa as partículas numa configuração de gota
-            float margin = wallMargin + 1.0f;
+            float margin = wallMargin + 0.5f;
             
-            // Centro da gota
-            Vector3 dropletCenter = new Vector3(
+            // Create a dense block of particles at the top
+            Vector3 spawnCenter = new Vector3(
                 simulationWidth * 0.5f,
-                gridHeight * 0.7f,
+                gridHeight * 0.8f,  // Top 80%
                 simulationHeight * 0.5f
             );
             
-            float dropletRadius = Mathf.Min(simulationWidth, gridHeight, simulationHeight) * 0.3f;
+            // Create a dense block (not sphere)
+            int particlesPerSide = Mathf.CeilToInt(Mathf.Pow(particleCount, 1f/3f));
+            float spacing = 0.15f;
             
-            for (int i = 0; i < particleCount; i++)
+            int count = 0;
+            for (int x = 0; x < particlesPerSide && count < particleCount; x++)
             {
-                // Posiciona partículas aleatoriamente dentro de uma esfera
-                Vector3 randomDir = Random.onUnitSphere;
-                float randomDist = Random.Range(0f, dropletRadius);
-                Vector3 pos = dropletCenter + randomDir * randomDist;
-                
-                // Garante que está dentro dos limites
-                pos.x = Mathf.Clamp(pos.x, margin, simulationWidth - margin);
-                pos.y = Mathf.Clamp(pos.y, margin, gridHeight - margin);
-                pos.z = Mathf.Clamp(pos.z, margin, simulationHeight - margin);
-                
-                particlePositions[i] = pos;
-                particleVelocities[i] = Vector3.zero; // Velocidade inicial zero
+                for (int y = 0; y < particlesPerSide && count < particleCount; y++)
+                {
+                    for (int z = 0; z < particlesPerSide && count < particleCount; z++)
+                    {
+                        Vector3 pos = new Vector3(
+                            spawnCenter.x + (x - particlesPerSide/2f) * spacing,
+                            spawnCenter.y + (y - particlesPerSide/2f) * spacing,
+                            spawnCenter.z + (z - particlesPerSide/2f) * spacing
+                        );
+                        
+                        // Clamp to ensure particles are inside bounds
+                        pos.x = Mathf.Clamp(pos.x, margin, simulationWidth - margin);
+                        pos.y = Mathf.Clamp(pos.y, margin, gridHeight - margin);
+                        pos.z = Mathf.Clamp(pos.z, margin, simulationHeight - margin);
+                        
+                        particlePositions[count] = pos;
+                        particleVelocities[count] = Vector3.zero;
+                        count++;
+                    }
+                }
             }
+            
+            Debug.Log($"Initialized {count} particles in a dense block");
         }
 
-        private void Update()
+        void Update()
         {
-            float dt = Time.deltaTime;
+            if (!isInitialized) return;
 
-            CheckParameterChanges();
+            // Fixed time step for stability
+            float dt = 0.016f; // Fixed 60 FPS
 
-            UpdateSpatialGrid();
-
-            CalculateDensitiesSPH();
-
-            CalculatePressureForcesSPH();
-
-            if (useArtificialRepulsion)
-                ApplyArtificialRepulsion(dt);
-
-            TransferParticlesToGrid();
-
-            grid.Step(dt);
-
-            TransferGridToParticles();
-
-            for (int i = 0; i<particleCount; i++)
+            if (sphComputeShader != null)
             {
-                UpdateParticleSPH(i, dt);
+                // Run SPH simulation on GPU
+                RunSPHSimulation(dt);
+            }
+            else
+            {
+                Debug.LogError("SPH Compute Shader is not assigned!");
+                return;
             }
 
-            particlePositionsBuffer.SetData(particlePositions);
-            particleVelocitiesBuffer.SetData(particleVelocities);
+            // Read data back from GPU
+            particlePositionsBuffer.GetData(particlePositions);
+            particleVelocitiesBuffer.GetData(particleVelocities);
+            densitiesBuffer.GetData(densities);
 
+            // Debug: Check if particles are moving
+            float totalVelocity = 0f;
+            for (int i = 0; i < particleCount; i++)
+            {
+                totalVelocity += particleVelocities[i].magnitude;
+            }
+            
+            if (Time.frameCount % 60 == 0)
+            {
+                Debug.Log($"Frame {Time.frameCount}: Avg Velocity = {totalVelocity/particleCount:F4}, Gravity Scale = {particleGravityScale}");
+                
+                // Check density
+                float avgDensity = 0f;
+                for (int i = 0; i < particleCount; i++) avgDensity += densities[i];
+                avgDensity /= particleCount;
+                Debug.Log($"Average Density: {avgDensity:F2}, Target: {targetDensity}");
+            }
+
+            // Render
             Graphics.DrawMeshInstancedProcedural(
                 particleMesh,
                 0,
                 particleMaterial,
-                new Bounds(new Vector3(simulationWidth, gridHeight, simulationHeight) * 0.5f,
+                new Bounds(new Vector3(simulationWidth * 0.5f, gridHeight * 0.5f, simulationHeight * 0.5f),
                           new Vector3(simulationWidth, gridHeight, simulationHeight)),
                 particleCount);
         }
 
-
-        /*void UpdateParticles(float dt)
+        void RunSPHSimulation(float dt)
         {
-            // Atualiza a grelha espacial com as novas posições
-            UpdateSpatialGrid();
-            
-            // Calcula densidades usando SPH
-            CalculateDensitiesSPH();
-            
-            // Calcula forças de pressão usando SPH
-            CalculatePressureForcesSPH();
+            // Reset spatial grid counts to zero
+            int[] zeroCounts = new int[totalCells];
+            spatialGridCountsBuffer.SetData(zeroCounts);
 
-            // Aplica repulsão artificial se ativada
-            if (useArtificialRepulsion)
-            {
-                ApplyArtificialRepulsion(dt);
-            }
+            // Set compute shader parameters - CRITICAL: Use correct parameter names
+            sphComputeShader.SetFloat("particleMass", particleMass);
+            sphComputeShader.SetFloat("smoothingRadius", smoothingRadius);
+            sphComputeShader.SetFloat("pressureMultiplier", pressureMultiplier);
+            sphComputeShader.SetFloat("targetDensity", targetDensity);
+            sphComputeShader.SetFloat("viscosityStrength", viscosityStrength);
+            sphComputeShader.SetFloat("gravityScale", particleGravityScale); // This is key!
+            sphComputeShader.SetFloat("dt", dt);
+            sphComputeShader.SetFloat("damping", damping);
+            sphComputeShader.SetFloat("maxSpeed", maxSpeed);
+            sphComputeShader.SetInt("particleCount", particleCount);
+            sphComputeShader.SetFloat("cellSize", spatialCellSize);
+            sphComputeShader.SetInt("gridCellsX", gridCellsX);
+            sphComputeShader.SetInt("gridCellsY", gridCellsY);
+            sphComputeShader.SetInt("gridCellsZ", gridCellsZ);
+            sphComputeShader.SetVector("gridBounds", new Vector3(simulationWidth, gridHeight, simulationHeight));
+            sphComputeShader.SetFloat("wallMargin", wallMargin);
+            sphComputeShader.SetFloat("wallBounce", wallBounce);
+            sphComputeShader.SetFloat("wallFriction", wallFriction);
+            sphComputeShader.SetBool("useArtificialRepulsion", useArtificialRepulsion);
+            sphComputeShader.SetFloat("repulsionStrength", repulsionStrength);
+            sphComputeShader.SetFloat("repulsionRadius", repulsionRadius);
 
-            // Atualiza cada partícula individualmente
-            for (int i = 0; i < particleCount; i++)
-            {
-                UpdateParticleSPH(i, dt);
-            }
-        }*/
+            // Find kernels
+            int buildGridKernel = sphComputeShader.FindKernel("BuildSpatialGrid");
+            int densitiesKernel = sphComputeShader.FindKernel("CalculateDensities");
+            int forcesKernel = sphComputeShader.FindKernel("CalculatePressureForces");
+            int updateKernel = sphComputeShader.FindKernel("UpdateParticles");
 
-        void UpdateSpatialGrid()
-        {
-            // Limpa a grelha espacial
-            for (int x = 0; x < gridCellsX; x++)
-                for (int y = 0; y < gridCellsY; y++)
-                    for (int z = 0; z < gridCellsZ; z++)
-                        spatialGrid[x, y, z].Clear();
+            int buildThreadGroups = Mathf.CeilToInt(particleCount / 256.0f);
 
-            // Reinsere todas as partículas na grelha
-            for (int i = 0; i < particleCount; i++)
-            {
-                Vector3 pos = particlePositions[i];
-                int gridX = Mathf.Clamp((int)(pos.x / spatialCellSize), 0, gridCellsX - 1);
-                int gridY = Mathf.Clamp((int)(pos.y / spatialCellSize), 0, gridCellsY - 1);
-                int gridZ = Mathf.Clamp((int)(pos.z / spatialCellSize), 0, gridCellsZ - 1);
+            // Build spatial grid
+            sphComputeShader.SetBuffer(buildGridKernel, "particlePositions", particlePositionsBuffer);
+            sphComputeShader.SetBuffer(buildGridKernel, "spatialGridCells", spatialGridCellsBuffer);
+            sphComputeShader.SetBuffer(buildGridKernel, "spatialGridOffsets", spatialGridOffsetsBuffer);
+            sphComputeShader.SetBuffer(buildGridKernel, "spatialGridCounts", spatialGridCountsBuffer);
+            sphComputeShader.SetBuffer(buildGridKernel, "spatialGridIndices", spatialGridIndicesBuffer);
+            sphComputeShader.Dispatch(buildGridKernel, buildThreadGroups, 1, 1);
 
-                spatialGrid[gridX, gridY, gridZ].Add(i);
-            }
+            // Calculate densities
+            sphComputeShader.SetBuffer(densitiesKernel, "particlePositions", particlePositionsBuffer);
+            sphComputeShader.SetBuffer(densitiesKernel, "densities", densitiesBuffer);
+            sphComputeShader.SetBuffer(densitiesKernel, "spatialGridCells", spatialGridCellsBuffer);
+            sphComputeShader.SetBuffer(densitiesKernel, "spatialGridOffsets", spatialGridOffsetsBuffer);
+            sphComputeShader.SetBuffer(densitiesKernel, "spatialGridCounts", spatialGridCountsBuffer);
+            sphComputeShader.SetBuffer(densitiesKernel, "spatialGridIndices", spatialGridIndicesBuffer);
+            sphComputeShader.Dispatch(densitiesKernel, buildThreadGroups, 1, 1);
+
+            // Calculate pressure forces
+            sphComputeShader.SetBuffer(forcesKernel, "particlePositions", particlePositionsBuffer);
+            sphComputeShader.SetBuffer(forcesKernel, "particleVelocities", particleVelocitiesBuffer);
+            sphComputeShader.SetBuffer(forcesKernel, "densities", densitiesBuffer);
+            sphComputeShader.SetBuffer(forcesKernel, "pressureForces", pressureForcesBuffer);
+            sphComputeShader.SetBuffer(forcesKernel, "spatialGridCells", spatialGridCellsBuffer);
+            sphComputeShader.SetBuffer(forcesKernel, "spatialGridOffsets", spatialGridOffsetsBuffer);
+            sphComputeShader.SetBuffer(forcesKernel, "spatialGridCounts", spatialGridCountsBuffer);
+            sphComputeShader.SetBuffer(forcesKernel, "spatialGridIndices", spatialGridIndicesBuffer);
+            sphComputeShader.Dispatch(forcesKernel, buildThreadGroups, 1, 1);
+
+            // Update particles
+            sphComputeShader.SetBuffer(updateKernel, "particlePositions", particlePositionsBuffer);
+            sphComputeShader.SetBuffer(updateKernel, "particleVelocities", particleVelocitiesBuffer);
+            sphComputeShader.SetBuffer(updateKernel, "pressureForces", pressureForcesBuffer);
+            sphComputeShader.SetBuffer(updateKernel, "spatialGridCells", spatialGridCellsBuffer);
+            sphComputeShader.SetBuffer(updateKernel, "spatialGridOffsets", spatialGridOffsetsBuffer);
+            sphComputeShader.SetBuffer(updateKernel, "spatialGridCounts", spatialGridCountsBuffer);
+            sphComputeShader.SetBuffer(updateKernel, "spatialGridIndices", spatialGridIndicesBuffer);
+            sphComputeShader.Dispatch(updateKernel, buildThreadGroups, 1, 1);
         }
-
-        List<int> GetParticlesInRadius(Vector3 position, float radius)
-        {
-            // Retorna partículas dentro de um raio, usando a grelha espacial para eficiência
-            tempNearby.Clear();
-            float radiusSq = radius * radius;
-
-            // Calcula célula da grelha
-            int gridX = Mathf.Clamp((int)(position.x / spatialCellSize), 0, gridCellsX - 1);
-            int gridY = Mathf.Clamp((int)(position.y / spatialCellSize), 0, gridCellsY - 1);
-            int gridZ = Mathf.Clamp((int)(position.z / spatialCellSize), 0, gridCellsZ - 1);
-
-            // Verifica células vizinhas (3x3x3)
-            for (int x = -1; x <= 1; x++)
-                for (int y = -1; y <= 1; y++)
-                    for (int z = -1; z <= 1; z++)
-                    {
-                        int cx = gridX + x;
-                        int cy = gridY + y;
-                        int cz = gridZ + z;
-
-                        // Verifica limites
-                        if (cx < 0 || cy < 0 || cz < 0 ||
-                            cx >= gridCellsX || cy >= gridCellsY || cz >= gridCellsZ)
-                            continue;
-
-                        // Adiciona partículas dentro do raio
-                        foreach (int j in spatialGrid[cx, cy, cz])
-                        {
-                            if ((particlePositions[j] - position).sqrMagnitude < radiusSq)
-                                tempNearby.Add(j);
-                        }
-                    }
-
-            return tempNearby;
-        }
-
-        float SmoothingKernel(float distance, float radius)
-        {
-            // Kernel polinomial padrão para SPH
-            if (distance >= radius) return 0f;
-
-            float r2 = distance * distance;
-            float r = radius;
-            float factor = 315f / (64f * Mathf.PI * Mathf.Pow(r, 9));
-            return factor * Mathf.Pow(r * r - r2, 3);
-        }
-
-        float SmoothingKernelDerivative(float distance, float radius)
-        {
-            // Derivada do kernel polinomial
-            if (distance >= radius || distance < 0.0001f) return 0f;
-
-            float r = radius;
-            float factor = 45f / (Mathf.PI * Mathf.Pow(r, 6));
-            float x = r - distance;
-            return factor * x * x;
-        }
-
-        float ViscosityKernel(float distance, float radius)
-        {
-            // Kernel para viscosidade
-            if (distance >= radius) return 0f;
-
-            float r = radius;
-            float factor = 45f / (Mathf.PI * Mathf.Pow(r, 6));
-            return factor * (r - distance);
-        }
-
-        void CalculateDensitiesSPH()
-        {
-            // Calcula densidades usando o método SPH
-            float radius = smoothingRadius;
-            float radiusSq = radius * radius;
-
-            for (int i = 0; i < particleCount; i++)
-            {
-                // Densidade inicial da própria partícula
-                float density = particleMass * SmoothingKernel(0, radius);
-                Vector3 posI = particlePositions[i];
-
-                // Obtém partículas vizinhas
-                List<int> nearby = GetParticlesInRadius(posI, radius);
-
-                // Adiciona contribuição de cada partícula vizinha
-                foreach (int j in nearby)
-                {
-                    if (i == j) continue;
-
-                    Vector3 delta = posI - particlePositions[j];
-                    float distSq = delta.sqrMagnitude;
-
-                    if (distSq < radiusSq)
-                    {
-                        float dist = Mathf.Sqrt(distSq);
-                        density += particleMass * SmoothingKernel(dist, radius);
-                    }
-                }
-
-                // Garante densidade mínima para evitar divisão por zero
-                densities[i] = Mathf.Max(density, 0.001f);
-            }
-        }
-        
-        void CalculatePressureForcesSPH()
-        {
-            // Calcula forças de pressão e viscosidade usando SPH
-            float radius = smoothingRadius;
-            float radiusSq = radius * radius;
-
-            for (int i = 0; i < particleCount; i++)
-            {
-                Vector3 pressureForce = Vector3.zero;
-                Vector3 viscosityForce = Vector3.zero;
-                Vector3 posI = particlePositions[i];
-                Vector3 velI = particleVelocities[i];
-
-                float densityI = densities[i];
-                float pressureI = pressureMultiplier * (densityI - targetDensity);
-
-                // Obtém partículas vizinhas
-                List<int> nearby = GetParticlesInRadius(posI, radius);
-
-                foreach (int j in nearby)
-                {
-                    if (i == j) continue;
-
-                    Vector3 delta = posI - particlePositions[j];
-                    float distSq = delta.sqrMagnitude;
-
-                    if (distSq < radiusSq && distSq > 0.0001f)
-                    {
-                        float dist = Mathf.Sqrt(distSq);
-                        Vector3 dir = delta / dist;
-
-                        float densityJ = densities[j];
-                        float pressureJ = pressureMultiplier * (densityJ - targetDensity);
-
-                        // Força de pressão simétrica
-                        float sharedPressure = (pressureI + pressureJ) / (2f * densityJ);
-                        pressureForce -= dir * particleMass * sharedPressure * 
-                                        SmoothingKernelDerivative(dist, radius);
-
-                        // Força de viscosidade
-                        Vector3 velJ = particleVelocities[j];
-                        viscosityForce += (velJ - velI) * ViscosityKernel(dist, radius) * 
-                                         particleMass / densityJ;
-                    }
-                }
-
-                // Combina forças de pressão e viscosidade
-                pressureForces[i] = (pressureForce / Mathf.Max(densityI, 0.001f)) +
-                                   (viscosityForce * viscosityStrength / Mathf.Max(densityI, 0.001f));
-            }
-        }
-
-        void ApplyArtificialRepulsion(float dt)
-        {
-            // Aplica força de repulsão artificial
-            if (!useArtificialRepulsion) return;
-            
-            float minDistance = repulsionRadius;
-            float minDistanceSq = minDistance * minDistance;
-
-            for (int i = 0; i < particleCount; i++)
-            {
-                List<int> nearby = GetParticlesInRadius(particlePositions[i], minDistance * 2f);
-
-                foreach (int j in nearby)
-                {
-                    if (i >= j) continue; // Evita duplicação de cálculos
-
-                    Vector3 delta = particlePositions[i] - particlePositions[j];
-                    float distSq = delta.sqrMagnitude;
-
-                    if (distSq < minDistanceSq && distSq > 0.0001f)
-                    {
-                        float dist = Mathf.Sqrt(distSq);
-                        Vector3 dir = delta / dist;
-
-                        // Força proporcional à proximidade
-                        float force = repulsionStrength * (1f - dist / minDistance);
-
-                        // Aplica força em direções opostas
-                        particleVelocities[i] += dir * force * dt * 0.5f;
-                        particleVelocities[j] -= dir * force * dt * 0.5f;
-                    }
-                }
-            }
-        }
-
-        void UpdateParticleSPH(int i, float dt)
-        {
-            // Atualiza uma partícula individual usando SPH
-            Vector3 pos = particlePositions[i];
-            
-            // Aceleração básica (gravidade)
-            Vector3 acceleration = new Vector3(0, GRAVITY, 0) * particleGravityScale;
-            
-            // Adiciona forças SPH
-            acceleration += pressureForces[i];
-            if (acceleration.magnitude > 50f)
-                acceleration = acceleration.normalized * 50f;
-
-            // Atualiza velocidade usando aceleração
-            particleVelocities[i] += acceleration * dt;
-            
-            // Aplica amortecimento
-            particleVelocities[i] *= Mathf.Pow(damping, dt * 60f);
-            
-            // Limita velocidade máxima
-            float speed = particleVelocities[i].magnitude;
-            if (speed > maxSpeed)
-            {
-                particleVelocities[i] *= maxSpeed / speed;
-            }
-            
-            // Atualiza posição
-            Vector3 newPos = pos + particleVelocities[i] * dt;
-            
-            // Processa colisões com paredes
-            HandleWallCollisions(ref newPos, ref particleVelocities[i]);
-            
-            particlePositions[i] = newPos;
-        }
-
-        void HandleWallCollisions(ref Vector3 position, ref Vector3 velocity)
-        {
-            // Processa colisões com as paredes
-            float margin = wallMargin;
-            
-            // Paredes em X
-            if (position.x < margin)
-            {
-                position.x = margin;
-                velocity.x = Mathf.Abs(velocity.x) * wallBounce;
-                velocity.y *= wallFriction;
-                velocity.z *= wallFriction;
-            }
-            else if (position.x > simulationWidth - margin)
-            {
-                position.x = simulationWidth - margin;
-                velocity.x = -Mathf.Abs(velocity.x) * wallBounce;
-                velocity.y *= wallFriction;
-                velocity.z *= wallFriction;
-            }
-
-            // Paredes em y (chão e teto)
-            if (position.y < margin)
-            {
-                position.y = margin;
-                velocity.y = Mathf.Abs(velocity.y) * wallBounce;
-                velocity.x *= wallFriction;
-                velocity.z *= wallFriction;
-            }
-            else if (position.y > gridHeight - margin)
-            {
-                position.y = gridHeight - margin;
-                velocity.y = -Mathf.Abs(velocity.y) * wallBounce;
-                velocity.x *= wallFriction;
-                velocity.z *= wallFriction;
-            }
-
-            // Paredes em Z
-            if (position.z < margin)
-            {
-                position.z = margin;
-                velocity.z = Mathf.Abs(velocity.z) * wallBounce;
-                velocity.x *= wallFriction;
-                velocity.y *= wallFriction;
-            }
-            else if (position.z > simulationHeight - margin)
-            {
-                position.z = simulationHeight - margin;
-                velocity.z = -Mathf.Abs(velocity.z) * wallBounce;
-                velocity.x *= wallFriction;
-                velocity.y *= wallFriction;
-            }
-            
-            // Garante que as partículas permanecem dentro dos limites
-            position.x = Mathf.Clamp(position.x, 0, simulationWidth);
-            position.y = Mathf.Clamp(position.y, 0, gridHeight);
-            position.z = Mathf.Clamp(position.z, 0, simulationHeight);
-        }
-
-        /// <summary>
-        /// Passa as velocidades das p+articulas pra grid (PIC/FLIP)
-        /// </summary>
-        void TransferParticlesToGrid()
-        {
-            Vector3Int size = grid.GetGridSize();
-            for (int x = 0; x < size.x; x++)
-                for (int y = 0; y < size.y; y++)
-                    for (int z = 0; z < size.z; z++)
-                    {
-                        grid.SetVelocity(x, y, z, Vector3.zero);
-                        grid.AddDensity(x, y, z, 0f);
-                    }
-
-            for (int i = 0; i < particleCount; i++)
-            {
-                Vector3 p = particlePositions[i];
-                Vector3 v = particleVelocities[i];
-
-                int x = Mathf.FloorToInt(p.x);
-                int y = Mathf.FloorToInt(p.y);
-                int z = Mathf.FloorToInt(p.z);
-
-                grid.AddVelocity(x, y, z, v);
-                grid.AddDensity(x, y, z, 1f);
-            }
-
-            for (int x = 0; x < size.x; x++)
-                for (int y = 0; y < size.y; y++)
-                    for (int z = 0; z < size.z; z++)
-                    {
-                        float d = grid.GetDensity(x, y, z);
-                        if (d > 0)
-                        {
-                            Vector3 vel = grid.GetVelocity(x, y, z);
-                            grid.SetVelocity(x, y, z, vel / d);
-                        }
-                    }
-        }
-
-        /// <summary>
-        /// Update as velocidades das particulas seguindo a grid (PIC/FLIP)
-        /// </summary>
-        void TransferGridToParticles()
-        {
-            for (int i = 0; i < particleCount; i++)
-            {
-                Vector3 p = particlePositions[i];
-
-                Vector3 vGrid = grid.SampleVelocity(p);
-                Vector3 vPrev = grid.SamplePreviousVelocity(p);
-                Vector3 dv = vGrid - vPrev;
-
-                Vector3 vPIC = vGrid;
-                Vector3 vFLIP = particleVelocities[i] + dv;
-
-                particleVelocities[i] =
-                    (1f - flipBlend) * vPIC +
-                    flipBlend * vFLIP;
-            }
-        }
-
 
         void OnDestroy()
         {
-            // Liberta recursos do shader
-            if (particlePositionsBuffer != null)
-            {
-                particlePositionsBuffer.Release();
-            }
-            if (particleVelocitiesBuffer != null)
-            {
-                particleVelocitiesBuffer.Release();
-            }
+            // Release all compute buffers
+            particlePositionsBuffer?.Release();
+            particleVelocitiesBuffer?.Release();
+            densitiesBuffer?.Release();
+            pressureForcesBuffer?.Release();
+            spatialGridCellsBuffer?.Release();
+            spatialGridOffsetsBuffer?.Release();
+            spatialGridCountsBuffer?.Release();
+            spatialGridIndicesBuffer?.Release();
         }
 
         public void ResetSimulation()
         {
-            // Reinicializa as partículas para a posição inicial
             InitializeParticles();
             particlePositionsBuffer.SetData(particlePositions);
+            particleVelocitiesBuffer.SetData(particleVelocities);
         }
-
+        
+        // Debug GUI
         void OnGUI()
         {
-            // Interface gráfica simples
-            if (!Application.isPlaying) return;
+            GUILayout.BeginArea(new Rect(10, 10, 300, 400));
+            GUILayout.Label("SPH-FLIP Simulation Debug");
+            GUILayout.Label($"Particles: {particleCount}");
+            GUILayout.Label($"Gravity Scale: {particleGravityScale}");
+            GUILayout.Label($"Pressure Multiplier: {pressureMultiplier}");
+            GUILayout.Label($"Target Density: {targetDensity}");
+            GUILayout.Label($"Smoothing Radius: {smoothingRadius}");
             
-            GUILayout.BeginArea(new Rect(10, 10, 400, 200));
-            GUILayout.Label("CONTROLO DA SIMULAÇÃO DE FLUIDO");
-            GUILayout.Label($"Partículas: {particleCount}");
-            GUILayout.Label($"FPS: {1f/Time.deltaTime:F1}");
-            
-            // Calcula estatísticas
-            float avgDensity = 0f;
-            int movingParticles = 0;
-            
-            for (int i = 0; i < particleCount; i++)
+            GUILayout.Space(10);
+            if (GUILayout.Button("Increase Gravity"))
             {
-                avgDensity += densities[i];
-                if (particleVelocities[i].magnitude > velocityThreshold)
-                    movingParticles++;
+                particleGravityScale += 2.0f;
             }
-            
-            avgDensity /= particleCount;
-            
-            // Estatisticas no ecrã
-            GUILayout.Label($"Densidade Média: {avgDensity:F2} (Alvo: {targetDensity})");
-            GUILayout.Label($"Partículas em Movimento: {movingParticles}/{particleCount}");
-            GUILayout.Label($"Multiplicador de Pressão: {pressureMultiplier}");
-            GUILayout.Label($"Repulsão: {(useArtificialRepulsion ? "LIGADA" : "DESLIGADA")} ({repulsionStrength})");
-            
-            // Botão para reiniciar
-            if (GUILayout.Button("Reiniciar Simulação"))
+            if (GUILayout.Button("Decrease Gravity"))
+            {
+                particleGravityScale = Mathf.Max(0.1f, particleGravityScale - 2.0f);
+            }
+            if (GUILayout.Button("Reset Simulation"))
             {
                 ResetSimulation();
             }
-            
             GUILayout.EndArea();
         }
     }

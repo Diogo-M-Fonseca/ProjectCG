@@ -167,25 +167,26 @@ MonoBehaviour:
   simulationHeight: 8
   gridHeight: 16
   flipBlend: 0.95
-  particleCount: 5000
+  particleCount: 2000
   particleSize: 0.1
   particleMaterial: {fileID: 2100000, guid: 09cceb312df077e45a42e9f94395d000, type: 2}
   meshResolution: 1
   particleMass: 1
-  pressureMultiplier: 50
-  targetDensity: 20
+  pressureMultiplier: 40
+  targetDensity: 8
   smoothingRadius: 0.4
-  viscosityStrength: 1
-  damping: 0.99
-  maxSpeed: 8
+  viscosityStrength: 1.5
+  damping: 0.98
+  maxSpeed: 10
   particleGravityScale: 1
-  velocityThreshold: 0.02
   wallBounce: 0.3
-  wallFriction: 0.9
-  wallMargin: 0.5
+  wallFriction: 0.5
+  wallMargin: 0.2
   useArtificialRepulsion: 1
-  repulsionStrength: 15
-  repulsionRadius: 0.2
+  repulsionStrength: 200
+  repulsionRadius: 0.3
+  sphComputeShader: {fileID: 7200000, guid: 977c2ab164b79864b84e2a9b49fa8fff, type: 3}
+  gridComputeShader: {fileID: 7200000, guid: f52765d8f1d264844b03688c6d640126, type: 3}
 --- !u!1 &606476146
 GameObject:
   m_ObjectHideFlags: 0
