@@ -5,6 +5,7 @@
 #pragma kernel ComputeDivergence
 #pragma kernel JacobiPressure
 #pragma kernel SubtractPressureGradient
+#pragma kernel GridToParticles
 #define FP_SCALE 1000.0
 
 RWStructuredBuffer<uint> gridDensity;
@@ -32,6 +33,7 @@ uint particleCount;
 float particleMass;
 float dt;
 float cellSize;
+float flipRatio;
 
 // Clear grid buffers
 [numthreads(8, 8, 4)]
@@ -267,4 +269,26 @@ void SubtractPressureGradient(uint3 id : SV_DispatchThreadID)
     gradP.z = (pF - pB) / (2.0 * cellSize);
 
     gridVelocityWrite[idx] -= gradP;
+}
+
+[numthreads(256, 1, 1)]
+void GridToParticles(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= particleCount)
+        return;
+
+    float3 pos = particlePositions[i];
+    float3 vel = particleVelocities[i];
+
+    float3 gridVel = SampleGridVelocity(pos);
+
+    float3 deltaVel = gridVel - vel; 
+
+    vel = vel + flipRatio * deltaVel + (1.0 - flipRatio) * (gridVel - vel);
+
+    pos += vel * dt;
+
+    particleVelocities[i] = vel;
+    particlePositions[i] = pos;
 }
