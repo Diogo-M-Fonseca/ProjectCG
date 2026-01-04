@@ -1,21 +1,37 @@
 #pragma kernel ClearGrid
 #pragma kernel TransferToGrid
 #pragma kernel NormalizeGrid
+#pragma kernel AdvectGridVelocity
+#pragma kernel ComputeDivergence
+#pragma kernel JacobiPressure
+#pragma kernel SubtractPressureGradient
 #define FP_SCALE 1000.0
 
 RWStructuredBuffer<uint> gridDensity;
+
 RWStructuredBuffer<int3> gridVelocity; // acumulador
 RWStructuredBuffer<float3> gridVelocityFloat; // final
+
+StructuredBuffer<float3> gridVelocityRead;
+RWStructuredBuffer<float3> gridVelocityWrite;
+
 RWStructuredBuffer<uint> gridWeight;
 
 StructuredBuffer<float3> particlePositions;
 StructuredBuffer<float3> particleVelocities;
+
+RWStructuredBuffer<float> divergence;
+
+RWStructuredBuffer<float> pressureRead;
+RWStructuredBuffer<float> pressureWrite;
 
 int gridSizeX;
 int gridSizeY;
 int gridSizeZ;
 uint particleCount;
 float particleMass;
+float dt;
+float cellSize;
 
 // Clear grid buffers
 [numthreads(8, 8, 4)]
@@ -82,7 +98,7 @@ void TransferToGrid(uint3 id : SV_DispatchThreadID) {
     float w011 = (1 - tx) * ty * tz;
     float w111 = tx * ty * tz;
     
-    float3 velContrib = vel * particleMass * FP_SCALE;
+    float3 velContrib = vel * FP_SCALE;
     
     // Distribute to 8 neighboring cells
     DistributeToCell(x0, y0, z0, w000, velContrib);
@@ -121,4 +137,134 @@ void NormalizeGrid(uint3 id : SV_DispatchThreadID)
     {
         gridVelocityFloat[index] = float3(0, 0, 0);
     }
+}
+
+float3 SampleGridVelocity(float3 cell)
+{
+    cell = clamp(cell, 0.5, float3(gridSizeX, gridSizeY, gridSizeZ) - 1.5);
+
+    int3 i0 = (int3) floor(cell);
+    int3 i1 = i0 + 1;
+    float3 t = cell - i0;
+
+    #define IDX(x,y,z) ((x) + (y)*gridSizeX + (z)*gridSizeX*gridSizeY)
+
+    float3 c000 = gridVelocityRead[IDX(i0.x, i0.y, i0.z)];
+    float3 c100 = gridVelocityRead[IDX(i1.x, i0.y, i0.z)];
+    float3 c010 = gridVelocityRead[IDX(i0.x, i1.y, i0.z)];
+    float3 c110 = gridVelocityRead[IDX(i1.x, i1.y, i0.z)];
+    float3 c001 = gridVelocityRead[IDX(i0.x, i0.y, i1.z)];
+    float3 c101 = gridVelocityRead[IDX(i1.x, i0.y, i1.z)];
+    float3 c011 = gridVelocityRead[IDX(i0.x, i1.y, i1.z)];
+    float3 c111 = gridVelocityRead[IDX(i1.x, i1.y, i1.z)];
+
+    float3 c00 = lerp(c000, c100, t.x);
+    float3 c10 = lerp(c010, c110, t.x);
+    float3 c01 = lerp(c001, c101, t.x);
+    float3 c11 = lerp(c011, c111, t.x);
+
+    float3 c0 = lerp(c00, c10, t.y);
+    float3 c1 = lerp(c01, c11, t.y);
+
+    return lerp(c0, c1, t.z);
+}
+
+[numthreads(8, 8, 4)]
+void AdvectGridVelocity(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+        return;
+
+    int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
+
+    float3 pos = float3(id) + 0.5;
+    float3 vel = gridVelocityRead[idx];
+
+    float3 prevPos = pos - dt * vel;
+
+    gridVelocityWrite[idx] = SampleGridVelocity(prevPos);
+}
+
+[numthreads(8, 8, 4)]
+void ComputeDivergence(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+        return;
+
+    int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
+
+    #define IDX(x,y,z) ((x) + (y)*gridSizeX + (z)*gridSizeX*gridSizeY)
+
+    int x = id.x;
+    int y = id.y;
+    int z = id.z;
+
+    float3 vL = (x > 0) ? gridVelocityRead[IDX(x-1, y, z)] : float3(0, 0, 0);
+    float3 vR = (x < gridSizeX - 1) ? gridVelocityRead[IDX(x+1, y, z)] : float3(0, 0, 0);
+    float3 vD = (y > 0) ? gridVelocityRead[IDX(x, y-1, z)] : float3(0, 0, 0);
+    float3 vU = (y < gridSizeY - 1) ? gridVelocityRead[IDX(x, y+1, z)] : float3(0, 0, 0);
+    float3 vB = (z > 0) ? gridVelocityRead[IDX(x, y, z-1)] : float3(0, 0, 0);
+    float3 vF = (z < gridSizeZ - 1) ? gridVelocityRead[IDX(x, y, z+1)] : float3(0, 0, 0);
+
+    float div =
+        (vR.x - vL.x +
+         vU.y - vD.y +
+         vF.z - vB.z) / (2.0 * cellSize);
+
+    divergence[idx] = div;
+}
+
+[numthreads(8, 8, 4)]
+void JacobiPressure(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+        return;
+
+    int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
+
+    #define IDX(x,y,z) ((x) + (y)*gridSizeX + (z)*gridSizeX*gridSizeY)
+
+    int x = id.x;
+    int y = id.y;
+    int z = id.z;
+
+    float pL = (x > 0) ? pressureRead[IDX(x-1, y, z)] : 0.0;
+    float pR = (x < gridSizeX - 1) ? pressureRead[IDX(x+1, y, z)] : 0.0;
+    float pD = (y > 0) ? pressureRead[IDX(x, y-1, z)] : 0.0;
+    float pU = (y < gridSizeY - 1) ? pressureRead[IDX(x, y+1, z)] : 0.0;
+    float pB = (z > 0) ? pressureRead[IDX(x, y, z-1)] : 0.0;
+    float pF = (z < gridSizeZ - 1) ? pressureRead[IDX(x, y, z+1)] : 0.0;
+
+    float div = divergence[idx];
+
+    pressureWrite[idx] = (pL + pR + pD + pU + pB + pF - div * cellSize * cellSize) / 6.0;
+}
+
+[numthreads(8, 8, 4)]
+void SubtractPressureGradient(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+        return;
+
+    int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
+
+    #define IDX(x,y,z) ((x) + (y)*gridSizeX + (z)*gridSizeX*gridSizeY)
+
+    int x = id.x;
+    int y = id.y;
+    int z = id.z;
+
+    float pL = (x > 0) ? pressureRead[IDX(x-1, y, z)] : 0.0;
+    float pR = (x < gridSizeX - 1) ? pressureRead[IDX(x+1, y, z)] : 0.0;
+    float pD = (y > 0) ? pressureRead[IDX(x, y-1, z)] : 0.0;
+    float pU = (y < gridSizeY - 1) ? pressureRead[IDX(x, y+1, z)] : 0.0;
+    float pB = (z > 0) ? pressureRead[IDX(x, y, z-1)] : 0.0;
+    float pF = (z < gridSizeZ - 1) ? pressureRead[IDX(x, y, z+1)] : 0.0;
+
+    float3 gradP;
+    gradP.x = (pR - pL) / (2.0 * cellSize);
+    gradP.y = (pU - pD) / (2.0 * cellSize);
+    gradP.z = (pF - pB) / (2.0 * cellSize);
+
+    gridVelocityWrite[idx] -= gradP;
 }
