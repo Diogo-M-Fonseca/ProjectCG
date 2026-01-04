@@ -40,7 +40,6 @@ namespace CGProject
         [SerializeField] private float repulsionRadius = 0.3f;
 
         [Header("Compute Shaders")]
-        [SerializeField] private ComputeShader sphComputeShader;
         [SerializeField] private ComputeShader gridComputeShader;
 
         // Compute Buffers
@@ -48,12 +47,19 @@ namespace CGProject
         private ComputeBuffer particleVelocitiesBuffer;
         private ComputeBuffer densitiesBuffer;
         private ComputeBuffer pressureForcesBuffer;
-
-        // Spatial grid buffers
         private ComputeBuffer spatialGridCellsBuffer;
         private ComputeBuffer spatialGridOffsetsBuffer;
         private ComputeBuffer spatialGridCountsBuffer;
         private ComputeBuffer spatialGridIndicesBuffer;
+        private ComputeBuffer gridVelocityRead;
+        private ComputeBuffer gridVelocityWrite;
+        private ComputeBuffer gridVelocityFloat;
+        private ComputeBuffer gridWeight;
+        private ComputeBuffer gridDensity;
+        private ComputeBuffer divergence;
+        private ComputeBuffer pressureRead;
+        private ComputeBuffer pressureWrite;
+        private ComputeBuffer gridVelocityIntBuffer;
 
         // CPU arrays
         private Vector3[] particlePositions;
@@ -99,6 +105,8 @@ namespace CGProject
             
             // Initialize spatial grid
             InitializeSpatialGrid();
+
+            InitializeGridComputeShader();
 
             // Setup material
             if (particleMaterial != null)
@@ -199,14 +207,13 @@ namespace CGProject
             // Fixed time step for stability
             float dt = 0.016f; // Fixed 60 FPS
 
-            if (sphComputeShader != null)
+            if (gridComputeShader != null)
             {
-                // Run SPH simulation on GPU
-                RunSPHSimulation(dt);
+                RunGridSimulation(dt);
             }
             else
             {
-                Debug.LogError("SPH Compute Shader is not assigned!");
+                Debug.LogError("Compute Shader is not assigned!");
                 return;
             }
 
@@ -243,80 +250,126 @@ namespace CGProject
                 particleCount);
         }
 
-        void RunSPHSimulation(float dt)
+        void InitializeGridComputeShader()
         {
-            // Reset spatial grid counts to zero
-            int[] zeroCounts = new int[totalCells];
-            spatialGridCountsBuffer.SetData(zeroCounts);
+            int totalCells = gridCellsX * gridCellsY * gridCellsZ;
 
-            // Set compute shader parameters - CRITICAL: Use correct parameter names
-            sphComputeShader.SetFloat("particleMass", particleMass);
-            sphComputeShader.SetFloat("smoothingRadius", smoothingRadius);
-            sphComputeShader.SetFloat("pressureMultiplier", pressureMultiplier);
-            sphComputeShader.SetFloat("targetDensity", targetDensity);
-            sphComputeShader.SetFloat("viscosityStrength", viscosityStrength);
-            sphComputeShader.SetFloat("gravityScale", particleGravityScale); // This is key!
-            sphComputeShader.SetFloat("dt", dt);
-            sphComputeShader.SetFloat("damping", damping);
-            sphComputeShader.SetFloat("maxSpeed", maxSpeed);
-            sphComputeShader.SetInt("particleCount", particleCount);
-            sphComputeShader.SetFloat("cellSize", spatialCellSize);
-            sphComputeShader.SetInt("gridCellsX", gridCellsX);
-            sphComputeShader.SetInt("gridCellsY", gridCellsY);
-            sphComputeShader.SetInt("gridCellsZ", gridCellsZ);
-            sphComputeShader.SetVector("gridBounds", new Vector3(simulationWidth, gridHeight, simulationHeight));
-            sphComputeShader.SetFloat("wallMargin", wallMargin);
-            sphComputeShader.SetFloat("wallBounce", wallBounce);
-            sphComputeShader.SetFloat("wallFriction", wallFriction);
-            sphComputeShader.SetBool("useArtificialRepulsion", useArtificialRepulsion);
-            sphComputeShader.SetFloat("repulsionStrength", repulsionStrength);
-            sphComputeShader.SetFloat("repulsionRadius", repulsionRadius);
+            gridVelocityRead = new ComputeBuffer(totalCells, sizeof(float) * 3);
+            gridVelocityWrite = new ComputeBuffer(totalCells, sizeof(float) * 3);
+            gridVelocityFloat = new ComputeBuffer(totalCells, sizeof(float) * 3);
+            gridWeight = new ComputeBuffer(totalCells, sizeof(uint));
+            gridDensity = new ComputeBuffer(totalCells, sizeof(uint));
+            divergence = new ComputeBuffer(totalCells, sizeof(float));
+            pressureRead = new ComputeBuffer(totalCells, sizeof(float));
+            pressureWrite = new ComputeBuffer(totalCells, sizeof(float));
+            gridVelocityIntBuffer = new ComputeBuffer(totalCells, sizeof(int) * 3);
 
-            // Find kernels
-            int buildGridKernel = sphComputeShader.FindKernel("BuildSpatialGrid");
-            int densitiesKernel = sphComputeShader.FindKernel("CalculateDensities");
-            int forcesKernel = sphComputeShader.FindKernel("CalculatePressureForces");
-            int updateKernel = sphComputeShader.FindKernel("UpdateParticles");
+            int[] zeroInts = new int[totalCells * 3]; 
+            gridVelocityIntBuffer.SetData(zeroInts);
+            Vector3[] zeros = new Vector3[totalCells];
+            gridVelocityRead.SetData(zeros);
+            gridVelocityWrite.SetData(zeros);
+            gridVelocityFloat.SetData(zeros);
+            float[] zerosF = new float[totalCells];
+            divergence.SetData(zerosF);
+            float[] zerosP = new float[totalCells];
+            pressureRead.SetData(zerosP);
+            pressureWrite.SetData(zerosP);
+            uint[] zerosU = new uint[totalCells];
+            gridWeight.SetData(zerosU);
+            gridDensity.SetData(zerosU);
+        }
 
-            int buildThreadGroups = Mathf.CeilToInt(particleCount / 256.0f);
+        void RunGridSimulation(float dt)
+        {
+            int totalCells = gridCellsX * gridCellsY * gridCellsZ;
 
-            // Build spatial grid
-            sphComputeShader.SetBuffer(buildGridKernel, "particlePositions", particlePositionsBuffer);
-            sphComputeShader.SetBuffer(buildGridKernel, "spatialGridCells", spatialGridCellsBuffer);
-            sphComputeShader.SetBuffer(buildGridKernel, "spatialGridOffsets", spatialGridOffsetsBuffer);
-            sphComputeShader.SetBuffer(buildGridKernel, "spatialGridCounts", spatialGridCountsBuffer);
-            sphComputeShader.SetBuffer(buildGridKernel, "spatialGridIndices", spatialGridIndicesBuffer);
-            sphComputeShader.Dispatch(buildGridKernel, buildThreadGroups, 1, 1);
+            int gx = Mathf.Max(1, Mathf.CeilToInt(gridCellsX / 8f));
+            int gy = Mathf.Max(1, Mathf.CeilToInt(gridCellsY / 8f));
+            int gz = Mathf.Max(1, Mathf.CeilToInt(gridCellsZ / 4f));
+            int particleGroups = Mathf.CeilToInt(particleCount / 256f);
 
-            // Calculate densities
-            sphComputeShader.SetBuffer(densitiesKernel, "particlePositions", particlePositionsBuffer);
-            sphComputeShader.SetBuffer(densitiesKernel, "densities", densitiesBuffer);
-            sphComputeShader.SetBuffer(densitiesKernel, "spatialGridCells", spatialGridCellsBuffer);
-            sphComputeShader.SetBuffer(densitiesKernel, "spatialGridOffsets", spatialGridOffsetsBuffer);
-            sphComputeShader.SetBuffer(densitiesKernel, "spatialGridCounts", spatialGridCountsBuffer);
-            sphComputeShader.SetBuffer(densitiesKernel, "spatialGridIndices", spatialGridIndicesBuffer);
-            sphComputeShader.Dispatch(densitiesKernel, buildThreadGroups, 1, 1);
+            Vector3[] zeroV = new Vector3[totalCells];
+            float[] zeroF = new float[totalCells];
+            uint[] zeroU = new uint[totalCells];
 
-            // Calculate pressure forces
-            sphComputeShader.SetBuffer(forcesKernel, "particlePositions", particlePositionsBuffer);
-            sphComputeShader.SetBuffer(forcesKernel, "particleVelocities", particleVelocitiesBuffer);
-            sphComputeShader.SetBuffer(forcesKernel, "densities", densitiesBuffer);
-            sphComputeShader.SetBuffer(forcesKernel, "pressureForces", pressureForcesBuffer);
-            sphComputeShader.SetBuffer(forcesKernel, "spatialGridCells", spatialGridCellsBuffer);
-            sphComputeShader.SetBuffer(forcesKernel, "spatialGridOffsets", spatialGridOffsetsBuffer);
-            sphComputeShader.SetBuffer(forcesKernel, "spatialGridCounts", spatialGridCountsBuffer);
-            sphComputeShader.SetBuffer(forcesKernel, "spatialGridIndices", spatialGridIndicesBuffer);
-            sphComputeShader.Dispatch(forcesKernel, buildThreadGroups, 1, 1);
+            gridVelocityWrite.SetData(zeroV);
+            gridVelocityFloat.SetData(zeroV);
+            gridWeight.SetData(zeroU);
+            gridDensity.SetData(zeroU);
+            divergence.SetData(zeroF);
+            pressureWrite.SetData(zeroF);
 
-            // Update particles
-            sphComputeShader.SetBuffer(updateKernel, "particlePositions", particlePositionsBuffer);
-            sphComputeShader.SetBuffer(updateKernel, "particleVelocities", particleVelocitiesBuffer);
-            sphComputeShader.SetBuffer(updateKernel, "pressureForces", pressureForcesBuffer);
-            sphComputeShader.SetBuffer(updateKernel, "spatialGridCells", spatialGridCellsBuffer);
-            sphComputeShader.SetBuffer(updateKernel, "spatialGridOffsets", spatialGridOffsetsBuffer);
-            sphComputeShader.SetBuffer(updateKernel, "spatialGridCounts", spatialGridCountsBuffer);
-            sphComputeShader.SetBuffer(updateKernel, "spatialGridIndices", spatialGridIndicesBuffer);
-            sphComputeShader.Dispatch(updateKernel, buildThreadGroups, 1, 1);
+            int clearKernel = gridComputeShader.FindKernel("ClearGrid");
+            int transferKernel = gridComputeShader.FindKernel("TransferToGrid");
+            int normalizeKernel = gridComputeShader.FindKernel("NormalizeGrid");
+            int advectKernel = gridComputeShader.FindKernel("AdvectGridVelocity");
+            int divergenceKernel = gridComputeShader.FindKernel("ComputeDivergence");
+            int jacobiKernel = gridComputeShader.FindKernel("JacobiPressure");
+            int subtractKernel = gridComputeShader.FindKernel("SubtractPressureGradient");
+            int g2pKernel = gridComputeShader.FindKernel("GridToParticles");
+
+            gridComputeShader.SetInt("particleCount", particleCount);
+            gridComputeShader.SetInt("gridSizeX", gridCellsX);
+            gridComputeShader.SetInt("gridSizeY", gridCellsY);
+            gridComputeShader.SetInt("gridSizeZ", gridCellsZ);
+            gridComputeShader.SetFloat("dt", dt);
+            gridComputeShader.SetFloat("particleMass", particleMass);
+            gridComputeShader.SetFloat("flipRatio", flipBlend);
+            gridComputeShader.SetFloat("cellSize", spatialCellSize);
+
+            gridComputeShader.SetBuffer(clearKernel, "gridDensity", gridDensity);
+            gridComputeShader.SetBuffer(clearKernel, "gridVelocityInt", gridVelocityIntBuffer);
+            gridComputeShader.SetBuffer(clearKernel, "gridWeight", gridWeight);
+            gridComputeShader.Dispatch(clearKernel, gx, gy, gz);
+
+            gridComputeShader.SetBuffer(transferKernel, "particlePositions", particlePositionsBuffer);
+            gridComputeShader.SetBuffer(transferKernel, "particleVelocities", particleVelocitiesBuffer);
+            gridComputeShader.SetBuffer(transferKernel, "gridVelocityInt", gridVelocityIntBuffer);
+            gridComputeShader.SetBuffer(transferKernel, "gridWeight", gridWeight);
+            gridComputeShader.SetBuffer(transferKernel, "gridDensity", gridDensity);
+            gridComputeShader.Dispatch(transferKernel, particleGroups, 1, 1);
+
+            gridComputeShader.SetBuffer(normalizeKernel, "gridVelocityInt", gridVelocityIntBuffer);
+            gridComputeShader.SetBuffer(normalizeKernel, "gridVelocityFloat", gridVelocityFloat);
+            gridComputeShader.SetBuffer(normalizeKernel, "gridWeight", gridWeight);
+            gridComputeShader.Dispatch(normalizeKernel, gx, gy, gz);
+
+            gridComputeShader.SetBuffer(advectKernel, "gridVelocityRead", gridVelocityRead);
+            gridComputeShader.SetBuffer(advectKernel, "gridVelocityWrite", gridVelocityWrite);
+            gridComputeShader.Dispatch(advectKernel, gx, gy, gz);
+
+            gridComputeShader.SetBuffer(divergenceKernel, "gridVelocityRead", gridVelocityRead);
+            gridComputeShader.SetBuffer(divergenceKernel, "divergence", divergence);
+            gridComputeShader.Dispatch(divergenceKernel, gx, gy, gz);
+
+            for (int i = 0; i < 20; i++)
+            {
+                gridComputeShader.SetBuffer(jacobiKernel, "pressureRead", pressureRead);
+                gridComputeShader.SetBuffer(jacobiKernel, "pressureWrite", pressureWrite);
+                gridComputeShader.Dispatch(jacobiKernel, gx, gy, gz);
+
+                
+                ComputeBuffer tmp = pressureRead;
+                pressureRead = pressureWrite;
+                pressureWrite = tmp;
+            }
+
+            gridComputeShader.SetBuffer(subtractKernel, "gridVelocityWrite", gridVelocityWrite);
+            gridComputeShader.SetBuffer(subtractKernel, "pressureRead", pressureRead);
+            gridComputeShader.Dispatch(subtractKernel, gx, gy, gz);
+
+            gridComputeShader.SetBuffer(g2pKernel, "particlePositions", particlePositionsBuffer);
+            gridComputeShader.SetBuffer(g2pKernel, "particleVelocities", particleVelocitiesBuffer);
+            gridComputeShader.SetBuffer(g2pKernel, "gridVelocityRead", gridVelocityRead);
+            gridComputeShader.SetBuffer(g2pKernel, "gridVelocityWrite", gridVelocityWrite);
+            gridComputeShader.SetFloat("flipRatio", flipBlend);
+            gridComputeShader.Dispatch(g2pKernel, particleGroups, 1, 1);
+
+            var tempV = gridVelocityRead;
+            gridVelocityRead = gridVelocityWrite;
+            gridVelocityWrite = tempV;
+            
         }
 
         void OnDestroy()

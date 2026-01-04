@@ -6,15 +6,15 @@
 #pragma kernel JacobiPressure
 #pragma kernel SubtractPressureGradient
 #pragma kernel GridToParticles
-#define FP_SCALE 1000.0
+#define FP_SCALE 100.0
 
 RWStructuredBuffer<uint> gridDensity;
 
-RWStructuredBuffer<int3> gridVelocity; // acumulador
-RWStructuredBuffer<float3> gridVelocityFloat; // final
+RWStructuredBuffer<int3> gridVelocityInt; 
+RWStructuredBuffer<float3> gridVelocityFloat; 
 
-StructuredBuffer<float3> gridVelocityRead;
-RWStructuredBuffer<float3> gridVelocityWrite;
+StructuredBuffer<float3> gridVelocityRead; 
+RWStructuredBuffer<float3> gridVelocityWrite; 
 
 RWStructuredBuffer<uint> gridWeight;
 
@@ -46,7 +46,7 @@ void ClearGrid(uint3 id : SV_DispatchThreadID) {
     
     int index = (int)(x + y * gridSizeX + z * gridSizeX * gridSizeY);
     gridDensity[index] = 0;
-    gridVelocity[index] = int3(0, 0, 0);
+    gridVelocityInt[index] = int3(0, 0, 0);
     gridWeight[index] = 0;
 }
 
@@ -61,9 +61,9 @@ void DistributeToCell(int x, int y, int z, float weight, float3 velContrib)
 
     InterlockedAdd(gridWeight[index], w);
     
-    InterlockedAdd(gridVelocity[index].x, (int) (velContrib.x * weight));
-    InterlockedAdd(gridVelocity[index].y, (int) (velContrib.y * weight));
-    InterlockedAdd(gridVelocity[index].z, (int) (velContrib.z * weight));
+    InterlockedAdd(gridVelocityInt[index].x, (int) (velContrib.x * weight));
+    InterlockedAdd(gridVelocityInt[index].y, (int) (velContrib.y * weight));
+    InterlockedAdd(gridVelocityInt[index].z, (int) (velContrib.z * weight));
     
     InterlockedAdd(gridDensity[index], (uint) (weight * particleMass * FP_SCALE));
 }
@@ -130,9 +130,9 @@ void NormalizeGrid(uint3 id : SV_DispatchThreadID)
 
         gridVelocityFloat[index] = 
         float3(
-            (float) gridVelocity[index].x,
-            (float) gridVelocity[index].y,
-            (float) gridVelocity[index].z
+            (float) gridVelocityInt[index].x,
+            (float) gridVelocityInt[index].y,
+            (float) gridVelocityInt[index].z
               ) * invW / FP_SCALE;
     }
     else
@@ -180,6 +180,7 @@ void AdvectGridVelocity(uint3 id : SV_DispatchThreadID)
     int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
 
     float3 pos = float3(id) + 0.5;
+    
     float3 vel = gridVelocityRead[idx];
 
     float3 prevPos = pos - dt * vel;
@@ -281,13 +282,15 @@ void GridToParticles(uint3 id : SV_DispatchThreadID)
     float3 pos = particlePositions[i];
     float3 vel = particleVelocities[i];
 
-    float3 gridVel = SampleGridVelocity(pos);
+    float3 cellPos = pos / cellSize; 
+    float3 gridVel = SampleGridVelocity(cellPos);
 
     float3 deltaVel = gridVel - vel; 
 
-    vel = vel + flipRatio * deltaVel + (1.0 - flipRatio) * (gridVel - vel);
+    vel += flipRatio * deltaVel * dt;
 
     pos += vel * dt;
+    pos = clamp(pos, 0.5, float3(gridSizeX, gridSizeY, gridSizeZ) - 1.5);
 
     particleVelocities[i] = vel;
     particlePositions[i] = pos;
