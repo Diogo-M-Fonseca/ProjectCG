@@ -1,10 +1,12 @@
 #pragma kernel ClearGrid
 #pragma kernel TransferToGrid
 #pragma kernel NormalizeGrid
+#define FP_SCALE 1000.0
 
-RWStructuredBuffer<float> gridDensity;
-RWStructuredBuffer<float3> gridVelocity;
-RWStructuredBuffer<float> gridWeight;
+RWStructuredBuffer<uint> gridDensity;
+RWStructuredBuffer<int3> gridVelocity; // acumulador
+RWStructuredBuffer<float3> gridVelocityFloat; // final
+RWStructuredBuffer<uint> gridWeight;
 
 StructuredBuffer<float3> particlePositions;
 StructuredBuffer<float3> particleVelocities;
@@ -25,23 +27,46 @@ void ClearGrid(uint3 id : SV_DispatchThreadID) {
     if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ) return;
     
     int index = (int)(x + y * gridSizeX + z * gridSizeX * gridSizeY);
-    gridDensity[index] = 0.0f;
-    gridVelocity[index] = float3(0, 0, 0);
-    gridWeight[index] = 0.0f;
+    gridDensity[index] = 0;
+    gridVelocity[index] = int3(0, 0, 0);
+    gridWeight[index] = 0;
+}
+
+void DistributeToCell(int x, int y, int z, float weight, float3 velContrib)
+{
+    if (x < 0 || x >= gridSizeX || y < 0 || y >= gridSizeY || z < 0 || z >= gridSizeZ)
+        return;
+    
+    int index = x + y * gridSizeX + z * gridSizeX * gridSizeY;
+    
+    uint w = (uint) (weight * FP_SCALE);
+
+    InterlockedAdd(gridWeight[index], w);
+    
+    InterlockedAdd(gridVelocity[index].x, (int) (velContrib.x * weight));
+    InterlockedAdd(gridVelocity[index].y, (int) (velContrib.y * weight));
+    InterlockedAdd(gridVelocity[index].z, (int) (velContrib.z * weight));
+    
+    InterlockedAdd(gridDensity[index], (uint) (weight * particleMass * FP_SCALE));
 }
 
 // Transfer particles to grid with trilinear interpolation
 [numthreads(256, 1, 1)]
 void TransferToGrid(uint3 id : SV_DispatchThreadID) {
+    
     uint i = id.x;
     if (i >= particleCount) return;
     
     float3 pos = particlePositions[i];
     float3 vel = particleVelocities[i];
     
-    int x0 = (int)floor(pos.x);
-    int y0 = (int)floor(pos.y);
-    int z0 = (int)floor(pos.z);
+    int x0 = (int) floor(pos.x);
+    int y0 = (int) floor(pos.y);
+    int z0 = (int) floor(pos.z);
+    
+    x0 = clamp(x0, 0, gridSizeX - 2);
+    y0 = clamp(y0, 0, gridSizeY - 2);
+    z0 = clamp(z0, 0, gridSizeZ - 2);
     
     float tx = pos.x - x0;
     float ty = pos.y - y0;
@@ -57,7 +82,7 @@ void TransferToGrid(uint3 id : SV_DispatchThreadID) {
     float w011 = (1 - tx) * ty * tz;
     float w111 = tx * ty * tz;
     
-    float3 velContrib = vel * particleMass;
+    float3 velContrib = vel * particleMass * FP_SCALE;
     
     // Distribute to 8 neighboring cells
     DistributeToCell(x0, y0, z0, w000, velContrib);
@@ -70,39 +95,30 @@ void TransferToGrid(uint3 id : SV_DispatchThreadID) {
     DistributeToCell(x0 + 1, y0 + 1, z0 + 1, w111, velContrib);
 }
 
-void DistributeToCell(int x, int y, int z, float weight, float3 velContrib) {
-    if (x < 0 || x >= gridSizeX || y < 0 || y >= gridSizeY || z < 0 || z >= gridSizeZ) return;
-    
-    int index = x + y * gridSizeX + z * gridSizeX * gridSizeY;
-    
-    // Atomic operations for thread safety
-    float dummy;
-    InterlockedAdd(gridWeight[index], weight, dummy);
-    
-    // For velocity, we need to do it component-wise
-    float oldX, oldY, oldZ;
-    InterlockedAdd(gridVelocity[index].x, velContrib.x * weight, oldX);
-    InterlockedAdd(gridVelocity[index].y, velContrib.y * weight, oldY);
-    InterlockedAdd(gridVelocity[index].z, velContrib.z * weight, oldZ);
-    
-    // Density contribution
-    InterlockedAdd(gridDensity[index], weight * particleMass, dummy);
-}
-
 // Normalize grid values by weight
 [numthreads(8, 8, 4)]
-void NormalizeGrid(uint3 id : SV_DispatchThreadID) {
-    uint x = id.x;
-    uint y = id.y;
-    uint z = id.z;
+void NormalizeGrid(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+        return;
     
-    if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ) return;
+    int index = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
     
-    int index = (int)(x + y * gridSizeX + z * gridSizeX * gridSizeY);
-    float weight = gridWeight[index];
+    uint weight = gridWeight[index];
     
-    if (weight > 0.0001f) {
-        gridVelocity[index] = gridVelocity[index] / weight;
-        gridDensity[index] = gridDensity[index] / weight;
+    if (weight > 0)
+    {
+        float invW = 1.0 / (float) weight;
+
+        gridVelocityFloat[index] = 
+        float3(
+            (float) gridVelocity[index].x,
+            (float) gridVelocity[index].y,
+            (float) gridVelocity[index].z
+              ) * invW / FP_SCALE;
+    }
+    else
+    {
+        gridVelocityFloat[index] = float3(0, 0, 0);
     }
 }
