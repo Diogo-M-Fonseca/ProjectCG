@@ -9,7 +9,11 @@ Este projeto tem como objetivo a implementação de uma simulação de fluidos e
 
 ---
 
-## Obstáculo 1 – Geração de partículas
+## Obstaculo 1 - 3D vs 2D
+
+Para começarmos a trabalhar no projecto tinhamos de escolher primeiro em que dimensões queriamos simular o nosso fluido, uma simulação 2D parece ser o ponto inicial de todos os tutoriais, explicações e téses que se encontra na net, isto porque de facto uma simulação 2D inclui todos os conceitos base de uma simulação de fluidos e segundo a opinião de alguns é mais simples de implementar e visualizar, porém decidimos fazer a simulação diretamente em 3D, fazer as coisas exatamente como nesses tutoriais téses etc derrotaria o proposito deste projecto, para além de que uma simulação 3D parece mais divertida de se fazer, em parte também devido á sua suposta dificuldade extra.
+
+## Obstáculo 2 – Geração de partículas
 
 Para a geração das partículas, optou-se pela criação de **octaedros**, definidos através dos seus vértices, arestas e faces. A construção destas partículas foi realizada através do script **MeshGenerator**, responsável pela geração da *mesh* utilizada pelas partículas. Este script inclui ainda um parâmetro configurável no editor do Unity, permitindo ajustar a resolução do polígono.
 
@@ -24,7 +28,7 @@ Adicionalmente, foi desenvolvido um **shader** responsável por alterar a cor da
 
 ---
 
-## Obstáculo 2 – A grelha
+## Obstáculo 3 – A grelha
 
 Para permitir o movimento das partículas, foi implementada uma grelha tridimensional através do script **FluidGrid3D**, que aproxima a equação de **Navier-Stokes**. Este sistema calcula a **advecção**, bem como os campos de **densidade**, **velocidade** desta, tal como a **divergência** e **gradiente da pressão**.
 
@@ -38,7 +42,7 @@ A resolução da **equação de Poisson** para o cálculo da pressão foi realiz
 
 ---
 
-## Obstáculo 3 – Colisão
+## Obstáculo 4 – Colisão
 
 A implementação de colisões permitiu introduzir o conceito de **viscosidade**, completando, ainda que de forma simplificada, a equação de Navier-Stokes. Para este efeito, foi utilizado o método **Smoothed Particle Hydrodynamics (SPH)**, permitindo simular as interações entre partículas de forma direta, em vez de depender exclusivamente da grelha.
 
@@ -57,7 +61,7 @@ Para optimização do desempenho, foi implementada uma **grelha espacial**, redu
 
 ---
 
-## Obstáculo 4 – Perda de energia
+## Obstáculo 5 – Perda de energia
 
 Após múltiplas reimplementações do mesmo script, concluiu-se que, independentemente dos parâmetros utilizados, o fluido não atingia um estado estável. A redução da força das colisões resultava na sobreposição das partículas, enquanto forças de repulsão mais elevadas mantinham o sistema em constante movimento.
 
@@ -71,7 +75,7 @@ Como tentativa de estabilização, substituiu-se a integração **Euler** por **
 
 ---
 
-## Obstaculo 5 - Disconexão de Grids
+## Obstaculo 6 - Disconexão de Grids
 
 Foi adicionada um "gizmo" para ser possivel a visualização da Grid do script **FluidGrid3D** e das cells da mesma, atrás desse "gizmo" foi possivel observar que algumas particulas eram criadas fora da Grid mas comportavam-se de igual forma ás que eram criadas dentro da grid, isto cria algumas teorias sobre o que possivelmente poderia estar a acontecer.
 
@@ -87,7 +91,7 @@ Possibilidade 3 - O gizmo não está bem feito.
 
 - Quando um numero inferior a 3 mil particulas é criado as particulas parecem ficar "presas" a um plano inexistente em vez de se espalharem pelo comprimento todo do x e do z da grid.
 
-## Obstáculo 6 - Método PIC/FLIP e compute shaders
+## Obstáculo 7 - Método PIC/FLIP e compute shaders
 
 Para a simulação ser verdadeiramente semi-Lagrangiana, implementou-se o método PIC/FLIP para a sinergia necessária entre a grelha e as partículas ser possível, tendo um híbrido de SPH-FLIP. No entanto, por problemas de performance, mesmo implementando o método SPH, é necessário o uso de dois compute shaders, um para o calculo SPH e outro para a própria grelha.
 
@@ -101,7 +105,7 @@ Com a passagem das variáveis para os compute shaders, a simulação estabilizou
 
 ---
 
-## Obstáculo 6 - SPH vs PIC/FlIP
+## Obstáculo 8 - SPH vs PIC/FlIP
 
 SPH ou Smoothed-particle hydrodinamics é um dos metodos utilizados na computação grafica para simular o comportamento de agua através de particulas, ou seja são "contas" que passam informação particula-particula, enquanto que PIC/FLIP são "contas" que passam informação de grid-particula, dito isto a coexistencia de ambos é possivel mas bastante delicada, se ambos por algum desleixo fizerem a mesma conta as particulas acabam com valores extremamente incorrectos, sabendo disto tentamos retirar a influencia do SPH, mas os resultados não foram de todo satisfatórios.
 
@@ -115,7 +119,18 @@ SPH ou Smoothed-particle hydrodinamics é um dos metodos utilizados na computaç
 
 ## Conclusão
 
+Claramente maior parte dos tutorias e téses começam por criar uma simulação 2D por bom motivo, tivemos que aprender os conceitos tanto de programação quanto matemáticos deste projecto enquanto tinhamos que lidar com a complexidade extra de fazer a simulação funcionar em 3 dimensões, se tivessemos começado com uma simulação 2D poderiamos focarnos mais em absorver os conceitos essenciais para este trabalho e só depois se sobrasse tempo ter passado a simulação para 3D.
+
+É também obvio agora que deveriamos ter uma compreensão maior dos conceitos necessários para fazer este tipo de simulação antes de começar a faze-la, dito isso este projecto foi um professor excelente, todas as paredes e obstaculos em que batemos forçou-nos a pesquisar e experimentar com os conceitos que até então eram só teoricos, de maneira nenhuma saimos deste projecto "experts" no assunto mas definitivamente saimos deste projecto com um entendimento maior sobre simulação de fluidos e fisica de fluidos no geral.
+
 A partir de certo ponto, não foi possível manter a simulação capaz de reproduzir o comportamento correto, ou seja, existem de momento dois protótipos de simulação de fluídos onde uma se mantém incompleta mas estável e outra mais completa mas instável, cujos comportamentos são os seguintes:
+
+- Simulação Velha (old)
+  - 
+
+
+- Simulação Nova (Compute)
+  - 
 
 ### Protótipo velho:
 
