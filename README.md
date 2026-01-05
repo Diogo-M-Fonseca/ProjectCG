@@ -91,6 +91,8 @@ Possibilidade 3 - O gizmo não está bem feito.
 
 - Quando um numero inferior a 3 mil particulas é criado as particulas parecem ficar "presas" a um plano inexistente em vez de se espalharem pelo comprimento todo do x e do z da grid.
 
+---
+
 ## Obstáculo 7 - Método PIC/FLIP e compute shaders
 
 Para a simulação ser verdadeiramente semi-Lagrangiana, implementou-se o método PIC/FLIP para a sinergia necessária entre a grelha e as partículas ser possível, tendo um híbrido de SPH-FLIP. No entanto, por problemas de performance, mesmo implementando o método SPH, é necessário o uso de dois compute shaders, um para o calculo SPH e outro para a própria grelha.
@@ -114,6 +116,20 @@ SPH ou Smoothed-particle hydrodinamics é um dos metodos utilizados na computaç
 - As particulas estavam a comportarse de manerias muito incorrectas, desde serem criadas sem velocidades ou efeitos de gravidade até explodirem com diversas velocidades difrentes ou absurdas e nunca chegarem a um ponto de reposo.
 
 - Trocar Parâmetros pouco ou nada afetava as particulas nestes casos extremos.
+
+---
+
+## Obstáculo 9 - Kernels e Buffers em compute shaders
+
+Kernels e Buffers são essenciais para o funcionamento correcto de um compute shader, kernels são metodos executados em paralelo pelas threads do GPU enquanto que os buffers são pedaços de memória do GPU, defenir um buffer ou um kernel no compute shader não é um problema, o problema é saber usalos através do script C# que controla a simulação toda, tivemos diversos problemas e erros relativos a kernels que não eram encontrados e buffers que eram utilizados de maneira errada.
+
+### problemas encontrados
+
+- Particulas são criadas mas não se mexem pois os valores calculados pelos kernels não estão a ser aplicados a elas.
+
+- Kernels não estão a ser encontrados apesar de ultizar o indice/nome correcto.
+
+- Erros relacionados a buffers aparecem na consola por breves instantes mas desaparecem antes que possamos perceber exatamanete o que os causa.
 
 ---
 
