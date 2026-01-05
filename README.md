@@ -141,5 +141,18 @@ A partir de certo ponto, não foi possível manter a simulação capaz de reprod
 
 ## Fontes
 
-https://pages.cs.wisc.edu/~chaol/data/cs777/stam-stable_fluids.pdf - Stable Fluids (1999) - Jos Stam
-https://www.youtube.com/watch?v=rSKMYc1CQHE                        - Simulating Fluids -  Sebastian Lague
+- https://pages.cs.wisc.edu/~chaol/data/cs777/stam-stable_fluids.pdf            - Stable Fluids (1999) - Jos Stam
+
+- https://www.youtube.com/watch?v=rSKMYc1CQHE                                   - Simulating Fluids -  Sebastian Lague
+
+- https://shahriyarshahrabi.medium.com/gentle-introduction-to-fluid-simulation-for-programmers-and-technical-artists-7c0045c40bac - Gentle Introduction to Realtime Fluid Simulation for Programmers and Technical Artists - Shahriar Shahrabi
+
+- https://nccastaff.bournemouth.ac.uk/jmacey/MastersProject/MSc22/09/Thesis.pdf - Real-Time Multiple Fluid Simulation for Games - Jacob Worgan
+
+- https://graphics.cs.cmu.edu/nsp/course/15464-s20/www/lectures/BasicFluids.pdf - FLUID SIMULATION - Robert Bridson, UBC Matthias Müller-Fischer, AGEIA Inc.
+
+- https://www.youtube.com/watch?v=XmzBREkK8kY                                   - 18 - How to write a FLIP water/fluid simulation to run in your browser.                                                                - Ten Minute Physics
+
+
+
+
