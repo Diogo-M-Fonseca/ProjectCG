@@ -3,38 +3,47 @@ using System.Collections.Generic;
 
 namespace CGProject
 {
+    /// <summary>
+    /// Gestor principal da simulação de fluidos utilizando o método FLIP (Fluid Implicit Particle)
+    /// combinado com interações entre partículas via SPH (Smoothed Particle Hydrodynamics).
+    /// Esta classe gere a inicialização, atualização e renderização de partículas num ambiente 3D.
+    /// </summary>
     public class ParticleManager : MonoBehaviour
     {
-        [Header("Grid Configuration")]
+        // Configuração da grelha de simulação
+        [Header("Configuração da Grelha")]
         [SerializeField] private int simulationWidth = 8;
         [SerializeField] private int simulationHeight = 8;
         [SerializeField] private int gridHeight = 16;
-        [SerializeField, Range(0, 1)] float flipBlend = 0.95f;
-        [SerializeField] private int pressureIterations = 40;
+        [SerializeField, Range(0, 1)] float flipBlend = 0.95f; // Proporção de mistura entre FLIP e PIC
+        [SerializeField] private int pressureIterations = 40; // Iterações do solver de pressão
 
-        [Header("Particle Configuration")]
-        [SerializeField] private int particleCount = 500;
-        [SerializeField] private float particleSize = 0.1f;
-        [SerializeField] private Material particleMaterial;
-        [SerializeField] private int meshResolution = 1;
-        [SerializeField] private float gravityScale = 20.0f;
+        // Configuração das partículas
+        [Header("Configuração das Partículas")]
+        [SerializeField] private int particleCount = 500; // Número total de partículas
+        [SerializeField] private float particleSize = 0.1f; // Tamanho visual das partículas
+        [SerializeField] private Material particleMaterial; // Material para renderização
+        [SerializeField] private int meshResolution = 1; // Resolução da mesh do octaedro
+        [SerializeField] private float gravityScale = 20.0f; // Intensidade da gravidade
         
-        [Header("Particle Collision & Density")]
-        [SerializeField] private bool enableParticleCollisions = true;
-        [SerializeField] private float particleCollisionRadius = 0.12f;
-        [SerializeField] private float particleStiffness = 0.1f;
-        [SerializeField] private float particleDamping = 0.95f;
-        [SerializeField] private bool enableSPHDensity = true;
-        [SerializeField] private float smoothingRadius = 0.3f;
-        [SerializeField] private float targetDensity = 2.0f;
-        [SerializeField] private float pressureMultiplier = 1.0f;
-        [SerializeField] private float viscosityStrength = 0.1f;
+        // Configuração de colisões e densidade das partículas
+        [Header("Colisões e Densidade das Partículas")]
+        [SerializeField] private bool enableParticleCollisions = true; // Ativa colisões entre partículas
+        [SerializeField] private float particleCollisionRadius = 0.12f; // Raio para colisões
+        [SerializeField] private float particleStiffness = 0.1f; // Rigidez das colisões
+        [SerializeField] private float particleDamping = 0.95f; // Amortecimento das colisões
+        [SerializeField] private bool enableSPHDensity = true; // Ativa cálculo de densidade via SPH
+        [SerializeField] private float smoothingRadius = 0.3f; // Raio de suavização para SPH
+        [SerializeField] private float targetDensity = 2.0f; // Densidade alvo para pressão
+        [SerializeField] private float pressureMultiplier = 1.0f; // Multiplicador da força de pressão
+        [SerializeField] private float viscosityStrength = 0.1f; // Força da viscosidade
 
-        [Header("Compute Shaders")]
-        [SerializeField] private ComputeShader gridComputeShader;
-        [SerializeField] private ComputeShader particleComputeShader;
+        // Shaders de computação
+        [Header("Shaders de Computação")]
+        [SerializeField] private ComputeShader gridComputeShader; // Shader para cálculos da grelha
+        [SerializeField] private ComputeShader particleComputeShader; // Shader para interações entre partículas
 
-        // FLIP Simulation Buffers
+        // Buffers para simulação FLIP
         private ComputeBuffer particlePositionsBuffer;
         private ComputeBuffer particleVelocitiesBuffer;
         private ComputeBuffer gridVelocityIntBuffer;
@@ -44,78 +53,88 @@ namespace CGProject
         private ComputeBuffer pressure;
         private ComputeBuffer pressureTemp;
         
-        // Particle Interaction Buffers
+        // Buffers para interações entre partículas
         private ComputeBuffer particleDensityBuffer;
         private ComputeBuffer particleForcesBuffer;
         private ComputeBuffer spatialGridBuffer;
         private ComputeBuffer spatialGridCountBuffer;
         private ComputeBuffer particleNeighborsBuffer;
 
-        // Arrays
+        // Arrays para armazenamento de dados das partículas
         private Vector3[] particlePositions;
         private Vector3[] particleVelocities;
         private float[] particleDensities;
 
-        // Mesh for rendering
+        // Mesh para renderização
         private Mesh particleMesh;
 
-        // Grid dimensions
+        // Dimensões da grelha
         private int gridCellsX, gridCellsY, gridCellsZ;
         private float cellSize = 1.0f;
         private bool isInitialized = false;
         
-        // Spatial partitioning for particle collisions
+        // Particionamento espacial para otimização de colisões
         private int spatialGridSizeX, spatialGridSizeY, spatialGridSizeZ;
         private int spatialGridTotalCells;
-        private const int MAX_PARTICLES_PER_CELL = 16; // Reduced from 32 to save memory
+        private const int MAX_PARTICLES_PER_CELL = 16; // Máximo de partículas por célula da grelha espacial
 
+        /// <summary>
+        /// Inicializa a simulação ao iniciar o componente
+        /// </summary>
         void Start()
         {
             InitializeSimulation();
         }
 
+        /// <summary>
+        /// Configura todos os componentes necessários para a simulação
+        /// </summary>
         void InitializeSimulation()
         {
-            Debug.Log("Initializing FLIP fluid simulation with particle-particle collisions...");
+            Debug.Log("Inicialização da simulação de fluidos FLIP com colisões entre partículas...");
             
-            // Create octahedron mesh using your FluidGenerator
+            // Cria mesh do octaedro para representação visual das partículas
             particleMesh = FluidGenerator.MeshGenerator(meshResolution);
             
-            // Main simulation grid
+            // Calcula dimensões da grelha principal de simulação
             gridCellsX = Mathf.Max(1, Mathf.CeilToInt(simulationWidth / cellSize));
             gridCellsY = Mathf.Max(1, Mathf.CeilToInt(gridHeight / cellSize));
             gridCellsZ = Mathf.Max(1, Mathf.CeilToInt(simulationHeight / cellSize));
             int totalCells = gridCellsX * gridCellsY * gridCellsZ;
 
-            // OPTIMIZED: Use smoothingRadius for spatial grid cell size (better for SPH)
-            float spatialCellSize = smoothingRadius * 0.5f; // Half smoothing radius for better neighbor search
+            // Calcula dimensões da grelha espacial para otimização de colisões
+            float spatialCellSize = smoothingRadius * 0.5f;
             spatialGridSizeX = Mathf.Max(1, Mathf.CeilToInt(simulationWidth / spatialCellSize));
             spatialGridSizeY = Mathf.Max(1, Mathf.CeilToInt(gridHeight / spatialCellSize));
             spatialGridSizeZ = Mathf.Max(1, Mathf.CeilToInt(simulationHeight / spatialCellSize));
             spatialGridTotalCells = spatialGridSizeX * spatialGridSizeY * spatialGridSizeZ;
 
-            Debug.Log($"Grid dimensions: {gridCellsX}x{gridCellsY}x{gridCellsZ} = {totalCells} cells");
-            Debug.Log($"Spatial grid: {spatialGridSizeX}x{spatialGridSizeY}x{spatialGridSizeZ} = {spatialGridTotalCells} cells");
+            Debug.Log($"Dimensões da grelha: {gridCellsX}x{gridCellsY}x{gridCellsZ} = {totalCells} células");
+            Debug.Log($"Grelha espacial: {spatialGridSizeX}x{spatialGridSizeY}x{spatialGridSizeZ} = {spatialGridTotalCells} células");
 
-            // Validate parameters
+            // Validação de parâmetros de entrada
             if (particleCount <= 0 || gridCellsX <= 0 || gridCellsY <= 0 || gridCellsZ <= 0)
             {
-                Debug.LogError("Invalid simulation parameters!");
+                Debug.LogError("Parâmetros de simulação inválidos!");
                 return;
             }
 
+            // Inicializa arrays de dados das partículas
             particlePositions = new Vector3[particleCount];
             particleVelocities = new Vector3[particleCount];
             particleDensities = new float[particleCount];
 
+            // Configura posições iniciais das partículas
             InitializeParticles();
 
-            // Create all compute buffers
+            // Cria buffers de computação
             CreateComputeBuffers(totalCells);
 
+            // Preenche buffers com dados iniciais
             particlePositionsBuffer.SetData(particlePositions);
             particleVelocitiesBuffer.SetData(particleVelocities);
 
+            // Configura material de renderização com buffers adequados
             if (particleMaterial != null)
             {
                 particleMaterial.SetBuffer("_ParticlePositions", particlePositionsBuffer);
@@ -125,13 +144,16 @@ namespace CGProject
             }
 
             isInitialized = true;
-            Debug.Log($"FLIP fluid simulation initialized with {particleCount} particles");
-            Debug.Log($"Octahedron mesh resolution: {meshResolution}");
+            Debug.Log($"Simulação FLIP inicializada com {particleCount} partículas");
+            Debug.Log($"Resolução da mesh do octaedro: {meshResolution}");
         }
 
+        /// <summary>
+        /// Cria todos os buffers de computação necessários para a simulação
+        /// </summary>
         void CreateComputeBuffers(int totalCells)
         {
-            // FLIP Simulation buffers
+            // Buffers para simulação FLIP
             particlePositionsBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
             particleVelocitiesBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
             gridVelocityIntBuffer = new ComputeBuffer(totalCells, sizeof(int) * 3);
@@ -141,25 +163,29 @@ namespace CGProject
             pressure = new ComputeBuffer(totalCells, sizeof(float));
             pressureTemp = new ComputeBuffer(totalCells, sizeof(float));
             
-            // Particle interaction buffers
+            // Buffers para interações entre partículas
             particleDensityBuffer = new ComputeBuffer(particleCount, sizeof(float));
             particleForcesBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
             spatialGridBuffer = new ComputeBuffer(spatialGridTotalCells * MAX_PARTICLES_PER_CELL, sizeof(int));
             spatialGridCountBuffer = new ComputeBuffer(spatialGridTotalCells, sizeof(int));
             particleNeighborsBuffer = new ComputeBuffer(particleCount * 64, sizeof(int));
 
-            // Initialize buffers to zero
+            // Inicializa buffers com valores zero
             InitializeBuffersToZero(totalCells);
         }
 
+        /// <summary>
+        /// Inicializa todos os buffers com valores zero
+        /// </summary>
         void InitializeBuffersToZero(int totalCells)
         {
-            // FLIP buffers
+            // Arrays temporários para inicialização
             int[] zeroInts = new int[totalCells * 3];
             Vector3[] zeroVectors = new Vector3[totalCells];
             uint[] zeroUints = new uint[totalCells];
             float[] zeroFloats = new float[totalCells];
             
+            // Inicializa buffers FLIP
             gridVelocityIntBuffer.SetData(zeroInts);
             gridVelocityFloatBuffer.SetData(zeroVectors);
             gridWeight.SetData(zeroUints);
@@ -167,13 +193,14 @@ namespace CGProject
             pressure.SetData(zeroFloats);
             pressureTemp.SetData(zeroFloats);
             
-            // Particle interaction buffers
+            // Arrays temporários para buffers de partículas
             int[] zeroSpatialGrid = new int[spatialGridTotalCells * MAX_PARTICLES_PER_CELL];
             int[] zeroSpatialCounts = new int[spatialGridTotalCells];
             int[] zeroNeighbors = new int[particleCount * 64];
             float[] zeroDensities = new float[particleCount];
             Vector3[] zeroForces = new Vector3[particleCount];
             
+            // Inicializa buffers de partículas
             spatialGridBuffer.SetData(zeroSpatialGrid);
             spatialGridCountBuffer.SetData(zeroSpatialCounts);
             particleNeighborsBuffer.SetData(zeroNeighbors);
@@ -181,19 +208,23 @@ namespace CGProject
             particleForcesBuffer.SetData(zeroForces);
         }
 
+        /// <summary>
+        /// Configura as posições iniciais das partículas numa formação densa
+        /// </summary>
         void InitializeParticles()
         {            
-            // Create a dense blob at the top
+            // Define centro da formação de partículas
             Vector3 center = new Vector3(
                 simulationWidth * 0.5f,
                 gridHeight * 0.8f,
                 simulationHeight * 0.5f
             );
             
-            // Calculate spacing based on particle collision radius
+            // Calcula espaçamento baseado no raio de colisão
             int particlesPerDimension = Mathf.CeilToInt(Mathf.Pow(particleCount, 1f/3f));
-            float spacing = particleCollisionRadius * 0.8f; // Start with particles slightly compressed
+            float spacing = particleCollisionRadius * 0.8f; // Espaçamento inicial ligeiramente comprimido
             
+            // Distribui partículas numa grelha tridimensional
             int index = 0;
             for (int x = 0; x < particlesPerDimension && index < particleCount; x++)
             {
@@ -213,7 +244,7 @@ namespace CGProject
                 }
             }
             
-            // Fill remaining particles if not enough from grid
+            // Preenche partículas restantes com posições aleatórias
             while (index < particleCount)
             {
                 particlePositions[index] = new Vector3(
@@ -226,58 +257,66 @@ namespace CGProject
                 index++;
             }
             
-            Debug.Log($"Initialized {index} particles in a dense blob");
+            Debug.Log($"Inicializadas {index} partículas numa formação densa");
         }
 
+        /// <summary>
+        /// Atualiza a simulação em cada frame
+        /// </summary>
         void Update()
         {
+            // Verifica se a simulação está inicializada
             if (!isInitialized || gridComputeShader == null || particleComputeShader == null) return;
 
-            // Clamp dt for numerical stability
+            // Limita o delta time para estabilidade numérica
             float dt = Mathf.Min(0.016f, Time.deltaTime);
-            dt = Mathf.Clamp(dt, 0.001f, 0.033f); // 30-1000 FPS range
+            dt = Mathf.Clamp(dt, 0.001f, 0.033f); // Intervalo correspondente a 30-1000 FPS
             
-            // PARTICLE INTERACTIONS (SPH & Collisions)
+            // Processa interações entre partículas (SPH e colisões)
             if (enableParticleCollisions || enableSPHDensity)
             {
                 ProcessParticleInteractions(dt);
             }
             
-            // FLIP SIMULATION
+            // Executa simulação FLIP principal
             ProcessFLIPSimulation(dt);
             
-            // RENDER PARTICLES
+            // Renderiza partículas
             RenderParticles();
             
-            // DEBUG INFO
+            // Exibe informações de depuração periodicamente
             if (Time.frameCount % 60 == 0)
             {
                 LogDebugInfo();
             }
         }
 
+        /// <summary>
+        /// Processa interações entre partículas utilizando SPH e colisões
+        /// </summary>
         void ProcessParticleInteractions(float dt)
         {
-            // Find particle interaction kernels
+            // Identifica kernels do shader de partículas
             int buildSpatialGridKernel = particleComputeShader.FindKernel("BuildSpatialGrid");
             int findNeighborsKernel = particleComputeShader.FindKernel("FindNeighbors");
             int computeDensityKernel = particleComputeShader.FindKernel("ComputeDensity");
             int computeForcesKernel = particleComputeShader.FindKernel("ComputeForces");
             int applyForcesKernel = particleComputeShader.FindKernel("ApplyForces");
 
+            // Verifica se os kernels foram encontrados
             if (buildSpatialGridKernel == -1)
             {
-                Debug.LogError("Particle interaction kernels not found!");
+                Debug.LogError("Kernels de interação entre partículas não encontrados!");
                 return;
             }
 
-            // Calculate dispatch sizes
+            // Calcula dimensões de dispatch para execução paralela
             int spatialGroupsX = Mathf.Max(1, Mathf.CeilToInt(spatialGridSizeX / 8f));
             int spatialGroupsY = Mathf.Max(1, Mathf.CeilToInt(spatialGridSizeY / 8f));
             int spatialGroupsZ = Mathf.Max(1, Mathf.CeilToInt(spatialGridSizeZ / 4f));
             int particleGroups = Mathf.CeilToInt(particleCount / 256f);
 
-            // Set particle compute shader parameters
+            // Configura parâmetros do shader de partículas
             particleComputeShader.SetInt("particleCount", particleCount);
             particleComputeShader.SetInt("spatialGridSizeX", spatialGridSizeX);
             particleComputeShader.SetInt("spatialGridSizeY", spatialGridSizeY);
@@ -295,27 +334,27 @@ namespace CGProject
             particleComputeShader.SetVector("simulationBoundsMax", 
                 new Vector3(simulationWidth, gridHeight, simulationHeight));
 
-            // Convert bool to int for HLSL
+            // Converte booleanos para inteiros (HLSL não suporta bool diretamente)
             int enableCollisionsInt = enableParticleCollisions ? 1 : 0;
             int enableSPHInt = enableSPHDensity ? 1 : 0;
 
             particleComputeShader.SetInt("enableCollisions", enableCollisionsInt);
             particleComputeShader.SetInt("enableSPH", enableSPHInt);
 
-            // STEP 1: Build spatial grid
+            // Constrói grelha espacial para otimização
             particleComputeShader.SetBuffer(buildSpatialGridKernel, "particlePositions", particlePositionsBuffer);
             particleComputeShader.SetBuffer(buildSpatialGridKernel, "spatialGrid", spatialGridBuffer);
             particleComputeShader.SetBuffer(buildSpatialGridKernel, "spatialGridCount", spatialGridCountBuffer);
             particleComputeShader.Dispatch(buildSpatialGridKernel, spatialGroupsX, spatialGroupsY, spatialGroupsZ);
             
-            // STEP 2: Find neighbors
+            // Identifica vizinhos de cada partícula
             particleComputeShader.SetBuffer(findNeighborsKernel, "particlePositions", particlePositionsBuffer);
             particleComputeShader.SetBuffer(findNeighborsKernel, "spatialGrid", spatialGridBuffer);
             particleComputeShader.SetBuffer(findNeighborsKernel, "spatialGridCount", spatialGridCountBuffer);
             particleComputeShader.SetBuffer(findNeighborsKernel, "particleNeighbors", particleNeighborsBuffer);
             particleComputeShader.Dispatch(findNeighborsKernel, particleGroups, 1, 1);
             
-            // STEP 3: Compute density
+            // Calcula densidades (apenas se SPH ativado)
             if (enableSPHDensity)
             {
                 particleComputeShader.SetBuffer(computeDensityKernel, "particlePositions", particlePositionsBuffer);
@@ -324,7 +363,7 @@ namespace CGProject
                 particleComputeShader.Dispatch(computeDensityKernel, particleGroups, 1, 1);
             }
             
-            // STEP 4: Compute forces
+            // Calcula forças (pressão, viscosidade e colisões)
             particleComputeShader.SetBuffer(computeForcesKernel, "particlePositions", particlePositionsBuffer);
             particleComputeShader.SetBuffer(computeForcesKernel, "particleVelocities", particleVelocitiesBuffer);
             particleComputeShader.SetBuffer(computeForcesKernel, "particleDensities", particleDensityBuffer);
@@ -332,15 +371,18 @@ namespace CGProject
             particleComputeShader.SetBuffer(computeForcesKernel, "particleForces", particleForcesBuffer);
             particleComputeShader.Dispatch(computeForcesKernel, particleGroups, 1, 1);
             
-            // STEP 5: Apply forces
+            // Aplica forças calculadas às partículas
             particleComputeShader.SetBuffer(applyForcesKernel, "particleVelocities", particleVelocitiesBuffer);
             particleComputeShader.SetBuffer(applyForcesKernel, "particleForces", particleForcesBuffer);
             particleComputeShader.Dispatch(applyForcesKernel, particleGroups, 1, 1);
         }
 
+        /// <summary>
+        /// Executa a simulação FLIP principal
+        /// </summary>
         void ProcessFLIPSimulation(float dt)
         {
-            // Find FLIP simulation kernels
+            // Identifica kernels do shader da grelha
             int clearKernel = gridComputeShader.FindKernel("ClearGrid");
             int transferKernel = gridComputeShader.FindKernel("TransferToGrid");
             int normalizeKernel = gridComputeShader.FindKernel("NormalizeGrid");
@@ -350,19 +392,20 @@ namespace CGProject
             int subtractKernel = gridComputeShader.FindKernel("SubtractPressureGradient");
             int gridToParticlesKernel = gridComputeShader.FindKernel("GridToParticles");
 
+            // Verifica se os kernels foram encontrados
             if (clearKernel == -1)
             {
-                Debug.LogError("FLIP simulation kernels not found!");
+                Debug.LogError("Kernels da simulação FLIP não encontrados!");
                 return;
             }
 
-            // Calculate dispatch sizes
+            // Calcula dimensões de dispatch para execução paralela
             int gridGroupsX = Mathf.Max(1, Mathf.CeilToInt(gridCellsX / 8f));
             int gridGroupsY = Mathf.Max(1, Mathf.CeilToInt(gridCellsY / 8f));
             int gridGroupsZ = Mathf.Max(1, Mathf.CeilToInt(gridCellsZ / 4f));
             int particleGroups = Mathf.CeilToInt(particleCount / 256f);
 
-            // Set FLIP compute shader parameters
+            // Configura parâmetros do shader da grelha
             gridComputeShader.SetInt("gridSizeX", gridCellsX);
             gridComputeShader.SetInt("gridSizeY", gridCellsY);
             gridComputeShader.SetInt("gridSizeZ", gridCellsZ);
@@ -374,7 +417,7 @@ namespace CGProject
             gridComputeShader.SetVector("gravity", new Vector3(0, -gravityScale, 0));
             gridComputeShader.SetFloat("particleCollisionRadius", particleCollisionRadius);
 
-            // 1. Clear grid
+            // Limpa buffers da grelha
             gridComputeShader.SetBuffer(clearKernel, "gridVelocityInt", gridVelocityIntBuffer);
             gridComputeShader.SetBuffer(clearKernel, "gridVelocityFloat", gridVelocityFloatBuffer);
             gridComputeShader.SetBuffer(clearKernel, "gridWeight", gridWeight);
@@ -383,29 +426,29 @@ namespace CGProject
             gridComputeShader.SetBuffer(clearKernel, "pressureTemp", pressureTemp);
             gridComputeShader.Dispatch(clearKernel, gridGroupsX, gridGroupsY, gridGroupsZ);
 
-            // 2. Transfer particles to grid
+            // Transfere partículas para a grelha
             gridComputeShader.SetBuffer(transferKernel, "particlePositions", particlePositionsBuffer);
             gridComputeShader.SetBuffer(transferKernel, "particleVelocities", particleVelocitiesBuffer);
             gridComputeShader.SetBuffer(transferKernel, "gridVelocityInt", gridVelocityIntBuffer);
             gridComputeShader.SetBuffer(transferKernel, "gridWeight", gridWeight);
             gridComputeShader.Dispatch(transferKernel, particleGroups, 1, 1);
 
-            // 3. Normalize grid
+            // Normaliza velocidades na grelha
             gridComputeShader.SetBuffer(normalizeKernel, "gridVelocityInt", gridVelocityIntBuffer);
             gridComputeShader.SetBuffer(normalizeKernel, "gridVelocityFloat", gridVelocityFloatBuffer);
             gridComputeShader.SetBuffer(normalizeKernel, "gridWeight", gridWeight);
             gridComputeShader.Dispatch(normalizeKernel, gridGroupsX, gridGroupsY, gridGroupsZ);
 
-            // 4. Advect velocity
+            // Advecta velocidade na grelha
             gridComputeShader.SetBuffer(advectKernel, "gridVelocityFloat", gridVelocityFloatBuffer);
             gridComputeShader.Dispatch(advectKernel, gridGroupsX, gridGroupsY, gridGroupsZ);
 
-            // 5. Compute divergence
+            // Calcula divergência do campo de velocidade
             gridComputeShader.SetBuffer(divergenceKernel, "gridVelocityFloat", gridVelocityFloatBuffer);
             gridComputeShader.SetBuffer(divergenceKernel, "divergence", divergence);
             gridComputeShader.Dispatch(divergenceKernel, gridGroupsX, gridGroupsY, gridGroupsZ);
 
-            // 6. Jacobi pressure solver
+            // Resolve equação de Poisson para pressão (método de Jacobi)
             for (int i = 0; i < pressureIterations; i++)
             {
                 gridComputeShader.SetBuffer(jacobiKernel, "divergence", divergence);
@@ -414,24 +457,24 @@ namespace CGProject
                 gridComputeShader.SetBuffer(jacobiKernel, "pressureTemp", pressureTemp);
                 gridComputeShader.Dispatch(jacobiKernel, gridGroupsX, gridGroupsY, gridGroupsZ);
                 
-                // Swap pressure buffers
+                // Alterna buffers de pressão para iteração seguinte
                 ComputeBuffer temp = pressure;
                 pressure = pressureTemp;
                 pressureTemp = temp;
             }
 
-            // 7. Subtract pressure gradient
+            // Subtrai gradiente de pressão do campo de velocidade
             gridComputeShader.SetBuffer(subtractKernel, "gridVelocityFloat", gridVelocityFloatBuffer);
             gridComputeShader.SetBuffer(subtractKernel, "pressure", pressure);
             gridComputeShader.Dispatch(subtractKernel, gridGroupsX, gridGroupsY, gridGroupsZ);
 
-            // 8. Grid to particles
+            // Transfere velocidades da grelha para as partículas
             gridComputeShader.SetBuffer(gridToParticlesKernel, "particlePositions", particlePositionsBuffer);
             gridComputeShader.SetBuffer(gridToParticlesKernel, "particleVelocities", particleVelocitiesBuffer);
             gridComputeShader.SetBuffer(gridToParticlesKernel, "gridVelocityFloat", gridVelocityFloatBuffer);
             gridComputeShader.Dispatch(gridToParticlesKernel, particleGroups, 1, 1);
 
-            // Read back data
+            // Lê dados atualizados dos buffers para arrays CPU
             particlePositionsBuffer.GetData(particlePositions);
             particleVelocitiesBuffer.GetData(particleVelocities);
             if (enableSPHDensity)
@@ -440,15 +483,20 @@ namespace CGProject
             }
         }
 
+        /// <summary>
+        /// Renderiza as partículas utilizando instanciação procedural
+        /// </summary>
         void RenderParticles()
         {
             if (particleMaterial != null && particleMesh != null)
             {
+                // Define limites de renderização baseados nas dimensões da simulação
                 Bounds bounds = new Bounds(
                     new Vector3(simulationWidth * 0.5f, gridHeight * 0.5f, simulationHeight * 0.5f),
                     new Vector3(simulationWidth, gridHeight, simulationHeight)
                 );
 
+                // Desenha instâncias da mesh com dados das partículas
                 Graphics.DrawMeshInstancedProcedural(
                     particleMesh,
                     0,
@@ -459,11 +507,16 @@ namespace CGProject
             }
         }
 
+        /// <summary>
+        /// Regista informações sobre o estado da simulação
+        /// </summary>
         void LogDebugInfo()
         {
             float avgVelocity = 0f;
             float maxVelocity = 0f;
             float avgDensity = 0f;
+            
+            // Calcula estatísticas das partículas
             for (int i = 0; i < particleCount; i++)
             {
                 float vel = particleVelocities[i].magnitude;
@@ -474,16 +527,19 @@ namespace CGProject
             avgVelocity /= particleCount;
             avgDensity /= particleCount;
             
-            // Optional: Log additional info every 60 frames
-            if (Time.frameCount % 300 == 0) // Every 5 seconds at 60 FPS
+            // Regista informações detalhadas periodicamente
+            if (Time.frameCount % 300 == 0) // A cada 5 segundos (assumindo 60 FPS)
             {
-                Debug.Log($"Frame {Time.frameCount}: Avg Vel = {avgVelocity:F3}, Max Vel = {maxVelocity:F3}, Avg Density = {avgDensity:F3}");
+                Debug.Log($"Frame {Time.frameCount}: Velocidade Média = {avgVelocity:F3}, Velocidade Máxima = {maxVelocity:F3}, Densidade Média = {avgDensity:F3}");
             }
         }
 
+        /// <summary>
+        /// Liberta recursos ao destruir o componente
+        /// </summary>
         void OnDestroy()
         {
-            // Release all buffers
+            // Liberta todos os buffers de computação
             particlePositionsBuffer?.Release();
             particleVelocitiesBuffer?.Release();
             gridVelocityIntBuffer?.Release();
@@ -493,7 +549,7 @@ namespace CGProject
             pressure?.Release();
             pressureTemp?.Release();
             
-            // Particle interaction buffers
+            // Liberta buffers de interações entre partículas
             particleDensityBuffer?.Release();
             particleForcesBuffer?.Release();
             spatialGridBuffer?.Release();
@@ -501,45 +557,51 @@ namespace CGProject
             particleNeighborsBuffer?.Release();
         }
 
+        /// <summary>
+        /// Renderiza interface gráfica para controlo da simulação
+        /// </summary>
         void OnGUI()
         {
             GUILayout.BeginArea(new Rect(10, 10, 400, 600));
-            GUILayout.Label("FLIP Fluid Simulation - Enhanced");
-            GUILayout.Label($"Particles: {particleCount}");
-            GUILayout.Label($"Grid: {gridCellsX}x{gridCellsY}x{gridCellsZ}");
-            GUILayout.Label($"Gravity: {gravityScale}");
-            GUILayout.Label($"FLIP Blend: {flipBlend}");
-            GUILayout.Label($"Mesh Resolution: {meshResolution}");
+            GUILayout.Label("Simulação de Fluidos FLIP - Versão Melhorada");
+            GUILayout.Label($"Partículas: {particleCount}");
+            GUILayout.Label($"Grelha: {gridCellsX}x{gridCellsY}x{gridCellsZ}");
+            GUILayout.Label($"Gravidade: {gravityScale}");
+            GUILayout.Label($"Mistura FLIP: {flipBlend}");
+            GUILayout.Label($"Resolução da Mesh: {meshResolution}");
             
             GUILayout.Space(10);
-            GUILayout.Label("=== Particle Interactions ===");
+            GUILayout.Label("=== Interações entre Partículas ===");
             
-            enableParticleCollisions = GUILayout.Toggle(enableParticleCollisions, "Enable Particle Collisions");
+            // Controlos para colisões entre partículas
+            enableParticleCollisions = GUILayout.Toggle(enableParticleCollisions, "Ativar Colisões entre Partículas");
             if (enableParticleCollisions)
             {
-                GUILayout.Label("Collision Radius:");
+                GUILayout.Label("Raio de Colisão:");
                 particleCollisionRadius = GUILayout.HorizontalSlider(particleCollisionRadius, 0.05f, 0.3f);
-                GUILayout.Label("Stiffness:");
+                GUILayout.Label("Rigidez:");
                 particleStiffness = GUILayout.HorizontalSlider(particleStiffness, 0.01f, 1.0f);
-                GUILayout.Label("Damping:");
+                GUILayout.Label("Amortecimento:");
                 particleDamping = GUILayout.HorizontalSlider(particleDamping, 0.8f, 1.0f);
             }
             
-            enableSPHDensity = GUILayout.Toggle(enableSPHDensity, "Enable SPH Density");
+            // Controlos para densidade SPH
+            enableSPHDensity = GUILayout.Toggle(enableSPHDensity, "Ativar Densidade SPH");
             if (enableSPHDensity)
             {
-                GUILayout.Label("Smoothing Radius:");
+                GUILayout.Label("Raio de Suavização:");
                 smoothingRadius = GUILayout.HorizontalSlider(smoothingRadius, 0.1f, 0.5f);
-                GUILayout.Label("Target Density:");
+                GUILayout.Label("Densidade Alvo:");
                 targetDensity = GUILayout.HorizontalSlider(targetDensity, 0.5f, 5.0f);
-                GUILayout.Label("Pressure Multiplier:");
+                GUILayout.Label("Multiplicador de Pressão:");
                 pressureMultiplier = GUILayout.HorizontalSlider(pressureMultiplier, 0.1f, 3.0f);
-                GUILayout.Label("Viscosity:");
+                GUILayout.Label("Viscosidade:");
                 viscosityStrength = GUILayout.HorizontalSlider(viscosityStrength, 0.01f, 0.5f);
             }
             
             GUILayout.Space(10);
-            if (GUILayout.Button("Reset Simulation"))
+            // Botão para reiniciar simulação
+            if (GUILayout.Button("Reiniciar Simulação"))
             {
                 InitializeParticles();
                 particlePositionsBuffer.SetData(particlePositions);

@@ -4,192 +4,166 @@ Este projeto tem como objetivo a implementação de uma simulação de fluidos e
 
 ## Autores
 
-- **Diogo Fonseca** – a22402652  
-- **Miguel Filipe** – a22408872  
+- **Diogo Fonseca** – a22402652
+- **Miguel Filipe** – a22408872
 
 ---
 
-## Obstaculo 1 - 3D vs 2D
+## Obstáculo 1 – 3D vs. 2D
 
-Para começarmos a trabalhar no projecto tinhamos de escolher primeiro em que dimensões queriamos simular o nosso fluido, uma simulação 2D parece ser o ponto inicial de todos os tutoriais, explicações e téses que se encontra na net, isto porque de facto uma simulação 2D inclui todos os conceitos base de uma simulação de fluidos e segundo a opinião de alguns é mais simples de implementar e visualizar, porém decidimos fazer a simulação diretamente em 3D, fazer as coisas exatamente como nesses tutoriais téses etc derrotaria o proposito deste projecto, para além de que uma simulação 3D parece mais divertida de se fazer, em parte também devido á sua suposta dificuldade extra.
+Para iniciar o projeto, era necessário escolher a dimensionalidade da simulação. Embora a maioria dos tutoriais, explicações e teses disponíveis online comecem com simulações 2D, pois estas englobam todos os conceitos fundamentais e, segundo algumas opiniões, são mais simples de implementar e visualizar, optámos por desenvolver a simulação diretamente em 3D. Seguir estritamente os tutoriais existentes contrariaria o propósito académico do projeto. Além disso, considerámos que uma simulação 3D seria mais desafiadora e interessante de realizar.
 
 ## Obstáculo 2 – Geração de partículas
 
-Para a geração das partículas, optou-se pela criação de **octaedros**, definidos através dos seus vértices, arestas e faces. A construção destas partículas foi realizada através do script **MeshGenerator**, responsável pela geração da *mesh* utilizada pelas partículas. Este script inclui ainda um parâmetro configurável no editor do Unity, permitindo ajustar a resolução do polígono.
+Para a geração das partículas, optou-se pela criação de **octaedros**, definidos através dos seus vértices, arestas e faces. A construção destas partículas foi realizada através do script **MeshGenerator**, responsável pela geração da *mesh* utilizada. Este script inclui um parâmetro configurável no editor do Unity que permite ajustar a resolução do polígono.
 
-O preenchimento das faces dos polígonos foi realizado com o método **CreateFace**, que tem como propósito a construção das superfícies do octaedro.
+O preenchimento das faces foi realizado com o método **CreateFace**, desenvolvido para construir as superfícies do octaedro. A sua implementação foi baseada num trabalho de Sebastian Lague, sendo essencial para o processo.
 
-Adicionalmente, foi desenvolvido um **shader** responsável por alterar a cor das partículas em função da sua direção e velocidade, de forma a enriquecer o aspecto visual da simulação. No entanto, este efeito não se encontra totalmente funcional no momento de criação, uma vez que dependia da implementação completa da grelha de simulação.
+Adicionalmente, foi desenvolvido um **shader** para alterar a cor das partículas em função da sua direção e velocidade, com o intuito de enriquecer o aspeto visual. Contudo, este efeito não se encontra totalmente funcional neste momento, pois depende da implementação completa da grelha de simulação.
 
 ### Problemas encontrados
 
-- Necessidade de múltiplos ajustes na quantidade de partículas simuladas, de forma a equilibrar desempenho e estabilidade.
-- A utilização do método **CreateFace**, baseado numa implementação de Sebastian Lague, foi essencial para o preenchimento das faces dos polígonos.
+- Foi necessário realizar múltiplos ajustes na quantidade de partículas simuladas para equilibrar o desempenho e a estabilidade.
+- O método **CreateFace**, embora eficaz, exigiu uma adaptação ao nosso contexto.
 
 ---
 
 ## Obstáculo 3 – A grelha
 
-Para permitir o movimento das partículas, foi implementada uma grelha tridimensional através do script **FluidGrid3D**, que aproxima a equação de **Navier-Stokes**. Este sistema calcula a **advecção**, bem como os campos de **densidade**, **velocidade** desta, tal como a **divergência** e **gradiente da pressão**.
+Para suportar o movimento das partículas, implementou-se uma grelha tridimensional através do script **FluidGrid3D**, que aproxima numericamente a equação de **Navier-Stokes**. Este sistema calcula os processos de **advecção** e os campos de **densidade**, **velocidade**, **divergência** e **gradiente de pressão**.
 
-A resolução da **equação de Poisson** para o cálculo da pressão foi realizada utilizando o **método iterativo de Jacobi**. Após os cálculos, recorreu-se à **interpolação trilinear** para amostrar os campos de densidade e velocidade, garantindo maior estabilidade na simulação semi-Lagrangiana.
+A resolução da **equação de Poisson** para o cálculo da pressão foi efetuada utilizando o **método iterativo de Jacobi**. Após os cálculos, recorreu-se à **interpolação trilinear** para amostrar os campos de densidade e velocidade, garantindo maior estabilidade na abordagem semi-Lagrangiana.
 
 ### Problemas encontrados
 
-- A implementação inicial da gravidade e dos limites da grelha resultava no teleporte das partículas para o interior da grelha.
-- A ausência de colisões dificultou a validação da correção dos cálculos efetuados.
-- Sem colisões, a advecção tendia a atrair as partículas para os cantos da grelha, causando acumulação excessiva em vez de um comportamento de fluido natural.
+- A implementação inicial da gravidade e dos limites da grelha fazia com que as partículas fossem teleportadas para o interior da mesma.
+- A ausência de um sistema de colisões dificultou a validação da correção dos cálculos.
+- Sem colisões, a advecção tendia a acumular as partículas nos cantos da grelha, em vez de produzir um comportamento fluido natural.
 
 ---
 
-## Obstáculo 4 – Colisão
+## Obstáculo 4 – Colisões
 
-A implementação de colisões permitiu introduzir o conceito de **viscosidade**, completando, ainda que de forma simplificada, a equação de Navier-Stokes. Para este efeito, foi utilizado o método **Smoothed Particle Hydrodynamics (SPH)**, permitindo simular as interações entre partículas de forma direta, em vez de depender exclusivamente da grelha.
+A implementação de colisões permitiu introduzir o conceito de **viscosidade**, completando, de forma simplificada, a equação de Navier-Stokes. Para este fim, utilizou-se o método **Smoothed Particle Hydrodynamics (SPH)**, que simula interações diretas entre partículas, complementando a influência da grelha.
 
-Para optimização do desempenho, foi implementada uma **grelha espacial**, reduzindo a complexidade do cálculo de interacções de **O(n²)** para **O(n)**.
+Para otimizar o desempenho, foi implementada uma **grelha espacial**, reduzindo a complexidade computacional das interações de **O(n²)** para **O(n)**.
 
 ### Problemas encontrados
 
-- Comportamentos instáveis das partículas, tais como:
-  - Escalar superfícies verticais;
-  - Vibrações excessivas;
-  - Projeção para fora dos limites da simulação;
-  - Teleportes de volta para dentro das colisões;
-  - Ignorar gravidade e colisões;
-  - Agrupamento de partículas.
-- Mesmo após ajustes extensivos dos parâmetros, o fluido não apresentava um estado de repouso estável, como esperado num fluido real.
+- Observaram-se comportamentos instáveis das partículas, tais como:
+    - Escalagem de superfícies verticais;
+    - Vibrações excessivas;
+    - Projeção para fora dos limites da simulação;
+    - Teleporte de volta para o interior de colisões;
+    - Ignorar a gravidade e colisões;
+    - Agrupamento instável de partículas.
+- Mesmo após extensivos ajustes dos parâmetros, o fluido não atingia um estado de repouso estável, como seria expectável.
 
 ---
 
 ## Obstáculo 5 – Perda de energia
 
-Após múltiplas reimplementações do mesmo script, concluiu-se que, independentemente dos parâmetros utilizados, o fluido não atingia um estado estável. A redução da força das colisões resultava na sobreposição das partículas, enquanto forças de repulsão mais elevadas mantinham o sistema em constante movimento.
+Após múltiplas reimplementações, concluiu-se que, independentemente dos parâmetros utilizados, o fluido não atingia um estado estável. A redução da força das colisões resultava na sobreposição das partículas, enquanto forças de repulsão mais elevadas mantinham o sistema em movimento constante.
 
-Como tentativa de estabilização, substituiu-se a integração **Euler** por **Verlet**, com o objectivo de reduzir a instabilidade numérica. Foram ainda introduzidas variáveis adicionais, como **SurfaceTension** e **energyDissipationRate**, aplicadas no método **UpdateParticleSPH**, bem como perda adicional de energia durante colisões entre partículas.
-
-### Problemas encontrados
-
-- O desempenho da simulação degradou-se significativamente a partir de aproximadamente duas mil partículas.
-
-- A introdução de mecanismos de dissipação de energia não resolveu o problema de instabilidade, levando à remoção destas variáveis.
-
----
-
-## Obstaculo 6 - Disconexão de Grids
-
-Foi adicionada um "gizmo" para ser possivel a visualização da Grid do script **FluidGrid3D** e das cells da mesma, atrás desse "gizmo" foi possivel observar que algumas particulas eram criadas fora da Grid mas comportavam-se de igual forma ás que eram criadas dentro da grid, isto cria algumas teorias sobre o que possivelmente poderia estar a acontecer.
-
-Possibilidade 1 - A grid não está a comunicar correctamente com as particulas sendo indifrente se as particulas são criadas dentro ou fora dela.
-
-Possibilidade 2 - Existe mais que uma grid e o gizmo só está a desenhar uma delas, neste caso o que faz mais sentido é apagar a grid que não queremos usar.
-
-Possibilidade 3 - O gizmo não está bem feito.
+Numa tentativa de estabilização, substituiu-se o método de integração **Euler** por **Verlet**, com o objetivo de reduzir a instabilidade numérica. Foram também introduzidas variáveis como **SurfaceTension** e **energyDissipationRate** no método **UpdateParticleSPH**, bem como uma perda de energia adicional durante as colisões.
 
 ### Problemas encontrados
 
-- As particulas parecem comportar-se de igual forma dentro ou fora da grid visualizada com o gizmo.
-
-- Quando um numero inferior a 3 mil particulas é criado as particulas parecem ficar "presas" a um plano inexistente em vez de se espalharem pelo comprimento todo do x e do z da grid.
+- O desempenho da simulação degradou-se significativamente além das duas mil partículas.
+- A introdução de mecanismos de dissipação de energia não resolveu o problema de instabilidade, levando à sua posterior remoção.
 
 ---
 
-## Obstáculo 7 - Método PIC/FLIP e compute shaders
+## Obstáculo 6 – Desconexão de grelhas
 
-Para a simulação ser verdadeiramente semi-Lagrangiana, implementou-se o método PIC/FLIP para a sinergia necessária entre a grelha e as partículas ser possível, tendo um híbrido de SPH-FLIP. No entanto, por problemas de performance, mesmo implementando o método SPH, é necessário o uso de dois compute shaders, um para o calculo SPH e outro para a própria grelha.
+Foi adicionado um "gizmo" para visualizar a grelha do script **FluidGrid3D** e as suas células. Através desta visualização, observou-se que algumas partículas criadas fora da grelha se comportavam de forma idêntica às criadas no seu interior, o que suscitou as seguintes hipóteses:
 
-Com a passagem das variáveis para os compute shaders, a simulação estabilizou bastante, a perda de FPS deixou de ser um problema.
+1. A grelha não comunica corretamente com as partículas, sendo indiferente à sua localização.
+2. Existe mais do que uma grelha, e o gizmo apenas desenha uma delas.
+3. O gizmo não está a ser renderizado corretamente.
 
 ### Problemas encontrados
 
-- As partículas que previamente comportavam-se como fluidos, estabilizando no fundo da simulação com certos parâmetros definidos (após o obstáculo 4), estavam agora a flutuar ou a escalar as paredes mais uma vez.
-
-- Após trocar alguns parâmetros, as partículas apenas caem como areia e juntam-se no fundo da simulação
-
----
-
-## Obstáculo 8 - SPH vs PIC/FlIP
-
-SPH ou Smoothed-particle hydrodinamics é um dos metodos utilizados na computação grafica para simular o comportamento de agua através de particulas, ou seja são "contas" que passam informação particula-particula, enquanto que PIC/FLIP são "contas" que passam informação de grid-particula, dito isto a coexistencia de ambos é possivel mas bastante delicada, se ambos por algum desleixo fizerem a mesma conta as particulas acabam com valores extremamente incorrectos, sabendo disto tentamos retirar a influencia do SPH, mas os resultados não foram de todo satisfatórios.
-
-### problemas encontrados
-
-- As particulas estavam a comportarse de manerias muito incorrectas, desde serem criadas sem velocidades ou efeitos de gravidade até explodirem com diversas velocidades difrentes ou absurdas e nunca chegarem a um ponto de reposo.
-
-- Trocar Parâmetros pouco ou nada afetava as particulas nestes casos extremos.
+- As partículas comportam-se de forma semelhante dentro e fora da grelha visualizada.
+- Com menos de três mil partículas, estas parecem ficar confinadas a um plano invisível, em vez de se distribuírem ao longo dos eixos X e Z da grelha.
 
 ---
 
-## Obstáculo 9 - Kernels e Buffers em compute shaders
+## Obstáculo 7 – Método PIC/FLIP e *compute shaders*
 
-Kernels e Buffers são essenciais para o funcionamento correcto de um compute shader, kernels são metodos executados em paralelo pelas threads do GPU enquanto que os buffers são pedaços de memória do GPU, defenir um buffer ou um kernel no compute shader não é um problema, o problema é saber usalos através do script C# que controla a simulação toda, tivemos diversos problemas e erros relativos a kernels que não eram encontrados e buffers que eram utilizados de maneira errada.
+Para que a simulação fosse verdadeiramente semi-Lagrangiana, implementou-se o método **PIC/FLIP**, criando um híbrido com **SPH** para uma sinergia adequada entre a grelha e as partículas. Devido a problemas de desempenho, foi necessário recorrer a dois *compute shaders*: um para os cálculos SPH e outro para os cálculos da grelha.
 
-### problemas encontrados
+Com a migração dos cálculos para os *compute shaders*, a simulação estabilizou significativamente e os problemas de *frame rate* foram mitigados.
 
-- Particulas são criadas mas não se mexem pois os valores calculados pelos kernels não estão a ser aplicados a elas.
+### Problemas encontrados
 
-- Kernels não estão a ser encontrados apesar de ultizar o indice/nome correcto.
+- As partículas, que anteriormente exibiam um comportamento fluido estável, passaram a flutuar ou a escalar as paredes.
+- Após o ajuste de alguns parâmetros, as partículas passaram a cair como areia e a acumular-se no fundo da simulação.
 
-- Erros relacionados a buffers aparecem na consola por breves instantes mas desaparecem antes que possamos perceber exatamanete o que os causa.
+---
+
+## Obstáculo 8 – SPH vs. PIC/FLIP
+
+O método **SPH** (*Smoothed-particle hydrodynamics*) simula o comportamento do fluido através de interações diretas partícula-partícula. O método **PIC/FLIP**, por sua vez, baseia-se na troca de informação grelha-partícula. A coexistência de ambos é possível, mas delicada, pois a sobreposição de cálculos pode resultar em valores incorretos para as partículas. Tentámos reduzir a influência do SPH, mas os resultados não foram satisfatórios.
+
+### Problemas encontrados
+
+- As partículas exibiam comportamentos incorretos e extremos: eram criadas sem velocidade ou efeito da gravidade, explodiam com velocidades absurdas ou não atingiam um estado de repouso.
+- A alteração de parâmetros tinha um efeito mínimo ou nulo nestes casos.
+
+---
+
+## Obstáculo 9 – *Kernels* e *buffers* em *compute shaders*
+
+*Kernels* e *buffers* são elementos essenciais para o funcionamento de um *compute shader*. *Kernels* são métodos executados em paralelo na GPU, enquanto *buffers* são blocos de memória da mesma. A sua definição no *shader* é simples, a dificuldade reside na sua correta utilização a partir do script **ParticleManager** que controla a simulação. Encontrámos diversos erros relacionados com *kernels* não encontrados e *buffers* mal utilizados.
+
+### Problemas encontrados
+
+- As partículas eram criadas, mas não se moviam, pois os valores calculados pelos *kernels* não lhes eram aplicados.
+- *Kernels* não eram encontrados, apesar de se usar o nome/índice correto.
+- Erros relacionados com *buffers* apareciam brevemente na consola, dificultando o diagnóstico.
 
 ---
 
 ## Conclusão
 
-Claramente maior parte dos tutorias e téses começam por criar uma simulação 2D por bom motivo, tivemos que aprender os conceitos tanto de programação quanto matemáticos deste projecto enquanto tinhamos que lidar com a complexidade extra de fazer a simulação funcionar em 3 dimensões, se tivessemos começado com uma simulação 2D poderiamos focarnos mais em absorver os conceitos essenciais para este trabalho e só depois se sobrasse tempo ter passado a simulação para 3D.
+Torna-se evidente que a maioria dos tutoriais começa com simulações 2D por uma boa razão. Tivemos de assimilar os conceitos de programação e matemáticos utilizados no projeto enquanto lidávamos com a complexidade adicional de o fazer funcionar em três dimensões. Se tivéssemos começado com uma simulação 2D, poderíamos ter-nos focado mais na procura dos conceitos essenciais e, só posteriormente, trocado a simulação para 3D.
 
-É também obvio agora que deveriamos ter uma compreensão maior dos conceitos necessários para fazer este tipo de simulação antes de começar a faze-la, dito isso este projecto foi um professor excelente, todas as paredes e obstaculos em que batemos forçou-nos a pesquisar e experimentar com os conceitos que até então eram só teoricos, de maneira nenhuma saimos deste projecto "experts" no assunto mas definitivamente saimos deste projecto com um entendimento maior sobre simulação de fluidos e fisica de fluidos no geral.
+Reconhecemos também que seria benéfico ter uma compreensão mais profunda dos conceitos teóricos antes de iniciar a implementação. No entanto, este projeto revelou-se um excelente meio de aprendizagem. Cada obstáculo forçou-nos a pesquisar e a experimentar com conceitos que, até então, eram simplesmente teóricos. Embora não nos tenhamos tornado especialistas na área, saímos deste projeto com um entendimento significativamente mais amplo sobre simulação e física de fluidos.
 
-A partir de certo ponto, não foi possível manter a simulação capaz de reproduzir o comportamento correto, ou seja, existem de momento dois protótipos de simulação de fluídos onde uma se mantém incompleta mas estável e outra mais completa mas instável, cujos comportamentos são os seguintes:
+A partir de determinado ponto, não foi possível manter uma simulação funcional que reproduzisse o comportamento correto. Existem, atualmente, dois protótipos: um mais simples mas estável, e outro mais completo mas instável. Os seus comportamentos são os seguintes:
 
-- Simulação Velha (old)
-  - As particulas caem até o fundo da grid.
-  - Após chegarem ao fundo da grid saltam/salpicam por um pouco até entrarem em repouso.
-  - Quando estão em repouso criam uma superficie estável.
-  - Alterar os diversos parametros afeta bastante o que acontece na simulação, podendo criar situações instáveis.
+*   **Protótipo Antigo (SPH + Grelha):**
+    *   As partículas caem até ao fundo da grelha.
+    *   Após impactarem no fundo, salpicam brevemente até entrarem em repouso.
+    *   Em repouso, formam uma superfície estável.
+    *   A alteração dos diversos parâmetros afeta significativamente a simulação, podendo gerar instabilidade.
 
+*   **Protótipo Novo (Compute Shaders + FLIP):**
+    *   As partículas caem até ao fundo da grelha.
+    *   Ao chegarem ao fundo, entram em repouso quase instantaneamente.
+    *   Toda a lógica física está implementada em *compute shaders*.
+    *   Os parâmetros têm um efeito limitado na simulação, indicando um problema subjacente na comunicação com os *kernels*/*buffers*.
 
-- Simulação Nova (Compute)
-  - As particulas caem até o fundo da grid
-  - Após chegarem ao fundo da grid entram em repouso instantaneamente
-  - Toda a logica fisica da simulação está em compute shaders
-  - Os parametros pouco afetam o que acontece na simulação devido a um problema com os kernels/buffers
+### Análise do Protótipo Antigo
 
-### Protótipo velho:
+A simulação apresenta um comportamento funcional e visualmente coerente com cerca de **duas mil partículas**. Contudo, ao aumentar este número, a densidade do sistema cresce, gerando instabilidades – um problema comum em implementações de **SPH**. Neste protótipo, o SPH calcula as interações locais (pressão e viscosidade), a grelha resolve a incompressibilidade e os resultados são retornados às partículas. Foram tentadas limitações artificiais da densidade máxima sem sucesso. Ajustes na densidade base e no multiplicador de pressão permitiram simular mais partículas com relativa estabilidade, mas à custa de uma redução significativa no desempenho (FPS).
 
-- A simulação apresenta um comportamento funcional e visualmente coerente com cerca de **duas mil partículas**. Contudo, ao aumentar este número, a densidade do sistema cresce significativamente, originando instabilidades, que, após alguma pesquisa, verifica-se ser um problema comum em implementações de **Smoothed Particle Hydrodynamics**.
+### Análise do Protótipo Novo
 
-- Desta forma, o SPH calcula as interações locais das partículas (pressão e viscosidade), envia para a grelha que resolve a incompressibilidade e retorna para as partículas com os seus parâmetros.
+A simulação apresenta um comportamento disfuncional para qualquer número de partículas, apesar de integrar *compute shaders* e o método **FLIP**, constituindo a versão mais próxima do método semi-Lagrangiano que conseguimos atingir. Várias tentativas de reimplementação e ajuste de parâmetros não resultaram numa simulação estável e correta. Por outro lado, os FPS mantêm-se elevados, possivelmente porque os *compute shaders* estão a executar eficientemente, mas a lógica de colisões ou a transferência de dados pode estar incorreta – um problema que não conseguimos identificar definitivamente.
 
-- Foram exploradas tentativas de limitar artificialmente a densidade máxima, sem sucesso. No entanto, ao aumentar a densidade base e reduzir o multiplicador de pressão, foi possível simular um maior número de partículas com relativa estabilidade. Ainda assim, esta abordagem teve um impacto negativo no desempenho, resultando numa diminuição considerável de FPS.
+## Notas Finais
 
-### Protótipo novo:
-
-- A simulação apresenta um comportamento disfuncional a qualquer número de partículas apesar da implementação de cada um dos parâmetros anteriores, este encontra-se mais avançado pois já contem compute shaders e o metódo FLIP que consiste nas interações grelha-particula e particula-particula, sendo a versão mais aproximada do método semi-Lagrangiano que obtemos.
-
-- Foram exploradas várias tentativas de reimplementação e alterações de parâmetro para procurar algo estável e correto, sem sucesso.
-
-- Por outro lado, os FPS não estão a sofrer qualquer tipo de redução, talvez porque algo está errado com a implementação de colisões ou os compute shaders estão de fato a fazer o seu trabalho, o que, por muitas reimplementações e testes que foram executados, não fomos capazes de encontrar o problema para o comportamento das partículas.
-
-## Últimas notas
-
-- Embora não tenhamos conseguido desenvolver um protótipo totalmente funcional, com todos os obstáculos ultrapassados, a conclusão da sua implementação e a obtenção de uma simulação funcional até determinado ponto permitiram-nos compreender não só a pesquisa necessária para o seu desenvolvimento, mas também a dificuldade enfrentada durante a sua execução.
+Embora não tenhamos conseguido desenvolver um protótipo totalmente funcional que ultrapassasse todos os obstáculos, o processo de implementação e a obtenção de simulações parcialmente funcionais permitiram-nos compreender a investigação necessária e as dificuldades práticas inerentes ao desenvolvimento de uma simulação de fluidos. O projeto constituiu uma valiosa experiência de aprendizagem sobre os desafios da computação gráfica aplicada à simulação física.
 
 ---
 
 ## Fontes
 
-- https://pages.cs.wisc.edu/~chaol/data/cs777/stam-stable_fluids.pdf            - Stable Fluids (1999) - Jos Stam
-
-- https://www.youtube.com/watch?v=rSKMYc1CQHE                                   - Simulating Fluids -  Sebastian Lague
-
+- https://pages.cs.wisc.edu/~chaol/data/cs777/stam-stable_fluids.pdf - Stable Fluids (1999) - Jos Stam
+- https://www.youtube.com/watch?v=rSKMYc1CQHE - Simulating Fluids - Sebastian Lague
 - https://shahriyarshahrabi.medium.com/gentle-introduction-to-fluid-simulation-for-programmers-and-technical-artists-7c0045c40bac - Gentle Introduction to Realtime Fluid Simulation for Programmers and Technical Artists - Shahriar Shahrabi
-
 - https://nccastaff.bournemouth.ac.uk/jmacey/MastersProject/MSc22/09/Thesis.pdf - Real-Time Multiple Fluid Simulation for Games - Jacob Worgan
-
 - https://graphics.cs.cmu.edu/nsp/course/15464-s20/www/lectures/BasicFluids.pdf - FLUID SIMULATION - Robert Bridson, UBC Matthias Müller-Fischer, AGEIA Inc.
-
-- https://www.youtube.com/watch?v=XmzBREkK8kY                                   - 18 - How to write a FLIP water/fluid simulation to run in your browser.                                                                - Ten Minute Physics
-
-
-
-
+- https://www.youtube.com/watch?v=XmzBREkK8kY - 18 - How to write a FLIP water/fluid simulation to run in your browser. - Ten Minute Physics

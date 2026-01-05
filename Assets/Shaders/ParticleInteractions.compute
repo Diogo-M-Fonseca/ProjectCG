@@ -1,47 +1,60 @@
+// CGProject - Compute Shader para Interações entre Partículas (SPH & Colisões)
+// Kernel para simulação de interações partícula-partícula via SPH (Smoothed Particle Hydrodynamics)
+// e deteção/resolução de colisões entre partículas
+
 #pragma kernel BuildSpatialGrid
 #pragma kernel FindNeighbors
 #pragma kernel ComputeDensity
 #pragma kernel ComputeForces
 #pragma kernel ApplyForces
 
-// Buffers
-RWStructuredBuffer<float3> particlePositions;
-RWStructuredBuffer<float3> particleVelocities;
-RWStructuredBuffer<float> particleDensities;
-RWStructuredBuffer<float3> particleForces;
+// Buffers estruturados para dados das partículas
+RWStructuredBuffer<float3> particlePositions;   // Posições das partículas
+RWStructuredBuffer<float3> particleVelocities;  // Velocidades das partículas
+RWStructuredBuffer<float> particleDensities;    // Densidades calculadas via SPH
+RWStructuredBuffer<float3> particleForces;      // Forças acumuladas por partícula
 
-// Spatial grid buffers
-RWStructuredBuffer<int> spatialGrid;           // Grid of particle indices
-RWStructuredBuffer<int> spatialGridCount;      // Count per cell
-RWStructuredBuffer<int> particleNeighbors;     // List of neighbors for each particle
+// Buffers para grelha espacial otimizada
+RWStructuredBuffer<int> spatialGrid;            // Grelha espacial com índices de partículas
+RWStructuredBuffer<int> spatialGridCount;       // Contagem de partículas por célula
+RWStructuredBuffer<int> particleNeighbors;      // Lista de vizinhos para cada partícula
 
-// Parameters
-int particleCount;
-int spatialGridSizeX;
-int spatialGridSizeY;
-int spatialGridSizeZ;
-float dt;
-float smoothingRadius;
-float collisionRadius;
-float targetDensity;
-float pressureMultiplier;
-float viscosityStrength;
-float stiffness;
-float damping;
-int maxParticlesPerCell;
-float3 simulationBoundsMin;
-float3 simulationBoundsMax;
+// Parâmetros de simulação configuráveis via script C#
+int particleCount;              // Número total de partículas
+int spatialGridSizeX;           // Dimensão X da grelha espacial
+int spatialGridSizeY;           // Dimensão Y da grelha espacial
+int spatialGridSizeZ;           // Dimensão Z da grelha espacial
+float dt;                       // Passo temporal (delta time)
+float smoothingRadius;          // Raio de suavização para kernels SPH
+float collisionRadius;          // Raio de colisão entre partículas
+float targetDensity;            // Densidade alvo para cálculo de pressão
+float pressureMultiplier;       // Multiplicador da força de pressão
+float viscosityStrength;        // Intensidade da força de viscosidade
+float stiffness;                // Rigidez para resolução de colisões
+float damping;                  // Amortecimento para resolução de colisões
+int maxParticlesPerCell;        // Máximo de partículas por célula da grelha
+float3 simulationBoundsMin;     // Limite mínimo do volume de simulação
+float3 simulationBoundsMax;     // Limite máximo do volume de simulação
 
-// CHANGE: bool parameters to int (HLSL bool in constant buffers can cause issues)
-int enableCollisions;
-int enableSPH;
+// NOTA: Parâmetros booleanos convertidos para int (bool em constant buffers do HLSL pode causar problemas)
+int enableCollisions;           // Ativa/desativa colisões entre partículas (0=false, 1=true)
+int enableSPH;                  // Ativa/desativa cálculo SPH de densidade (0=false, 1=true)
 
-// Helper functions
+/// <summary>
+/// Calcula índice linear numa grelha espacial 3D
+/// </summary>
+/// <param name="cell">Coordenadas (x,y,z) da célula</param>
+/// <returns>Índice linear correspondente</returns>
 int GetGridIndex(int3 cell)
 {
     return cell.x + cell.y * spatialGridSizeX + cell.z * spatialGridSizeX * spatialGridSizeY;
 }
 
+/// <summary>
+/// Converte coordenadas mundiais para coordenadas de grelha espacial
+/// </summary>
+/// <param name="worldPos">Posição no espaço mundial</param>
+/// <returns>Coordenadas (x,y,z) da célula da grelha</returns>
 int3 WorldToGrid(float3 worldPos)
 {
     int3 cell;
@@ -51,7 +64,14 @@ int3 WorldToGrid(float3 worldPos)
     return cell;
 }
 
-// Standard SPH Kernel functions (Poly6 for density, Spiky for pressure, Viscosity kernel)
+// Funções de Kernel SPH padrão
+
+/// <summary>
+/// Kernel Poly6 para cálculo de densidade (suavização)
+/// </summary>
+/// <param name="distance">Distância entre partículas</param>
+/// <param name="radius">Raio de suavização (smoothing radius)</param>
+/// <returns>Valor do kernel na distância especificada</returns>
 float Poly6Kernel(float distance, float radius)
 {
     if (distance >= radius) return 0.0;
@@ -64,6 +84,12 @@ float Poly6Kernel(float distance, float radius)
     return (315.0 / (64.0 * pi * h9)) * value * value * value;
 }
 
+/// <summary>
+/// Kernel Spiky para cálculo do gradiente de pressão
+/// </summary>
+/// <param name="distance">Distância entre partículas</param>
+/// <param name="radius">Raio de suavização</param>
+/// <returns>Valor do gradiente do kernel na distância especificada</returns>
 float SpikyKernelGradient(float distance, float radius)
 {
     if (distance >= radius) return 0.0;
@@ -75,6 +101,12 @@ float SpikyKernelGradient(float distance, float radius)
     return (45.0 / (pi * h6)) * value * value;
 }
 
+/// <summary>
+/// Kernel para cálculo do Laplaciano de viscosidade
+/// </summary>
+/// <param name="distance">Distância entre partículas</param>
+/// <param name="radius">Raio de suavização</param>
+/// <returns>Valor do Laplaciano do kernel na distância especificada</returns>
 float ViscosityKernelLaplacian(float distance, float radius)
 {
     if (distance >= radius) return 0.0;
@@ -85,6 +117,10 @@ float ViscosityKernelLaplacian(float distance, float radius)
     return (45.0 / (pi * h6)) * (h - distance);
 }
 
+/// <summary>
+/// Kernel: Constrói a grelha espacial para otimização
+/// Configuração: 8x8x4 threads por grupo de threads
+/// </summary>
 [numthreads(8, 8, 4)]
 void BuildSpatialGrid(uint3 id : SV_DispatchThreadID)
 {
@@ -92,20 +128,25 @@ void BuildSpatialGrid(uint3 id : SV_DispatchThreadID)
     uint y = id.y;
     uint z = id.z;
     
+    // Verifica limites da grelha espacial
     if (x >= spatialGridSizeX || y >= spatialGridSizeY || z >= spatialGridSizeZ) 
         return;
     
     int gridIndex = GetGridIndex(int3(x, y, z));
     
-    // Clear count for this cell
+    // Limpa célula da grelha espacial
     int baseIndex = gridIndex * maxParticlesPerCell;
     for (int i = 0; i < maxParticlesPerCell; i++)
     {
-        spatialGrid[baseIndex + i] = -1;
+        spatialGrid[baseIndex + i] = -1; // -1 indica célula vazia
     }
     spatialGridCount[gridIndex] = 0;
 }
 
+/// <summary>
+/// Kernel: Encontra partículas vizinhas para cada partícula
+/// Configuração: 256 threads por grupo (otimizado para muitas partículas)
+/// </summary>
 [numthreads(256, 1, 1)]
 void FindNeighbors(uint3 id : SV_DispatchThreadID)
 {
@@ -117,9 +158,9 @@ void FindNeighbors(uint3 id : SV_DispatchThreadID)
     int3 cell = WorldToGrid(pos);
     
     int neighborCount = 0;
-    int baseNeighborIndex = particleIdx * 64;
+    int baseNeighborIndex = particleIdx * 64; // Cada partícula pode ter até 64 vizinhos
     
-    // Check current cell and neighboring cells (3x3x3 region)
+    // Verifica célula atual e células próximas (região 3x3x3)
     for (int dx = -1; dx <= 1; dx++)
     {
         for (int dy = -1; dy <= 1; dy++)
@@ -128,7 +169,7 @@ void FindNeighbors(uint3 id : SV_DispatchThreadID)
             {
                 int3 neighborCell = cell + int3(dx, dy, dz);
                 
-                // Check bounds
+                // Verifica limites da grelha espacial
                 if (neighborCell.x < 0 || neighborCell.x >= spatialGridSizeX ||
                     neighborCell.y < 0 || neighborCell.y >= spatialGridSizeY ||
                     neighborCell.z < 0 || neighborCell.z >= spatialGridSizeZ)
@@ -138,18 +179,20 @@ void FindNeighbors(uint3 id : SV_DispatchThreadID)
                 int count = spatialGridCount[gridIndex];
                 int baseGridIndex = gridIndex * maxParticlesPerCell;
                 
-                // Check all particles in this cell
+                // Verifica todas as partículas nesta célula
                 for (int i = 0; i < count && neighborCount < 64; i++)
                 {
                     int otherIdx = spatialGrid[baseGridIndex + i];
                     
+                    // Exclui a própria partícula e índices inválidos
                     if (otherIdx != particleIdx && otherIdx >= 0)
                     {
-                        // Check if within smoothing radius
+                        // Verifica se está dentro do raio de suavização
                         float3 otherPos = particlePositions[otherIdx];
                         float distance = length(pos - otherPos);
                         
-                        if (distance < smoothingRadius * 1.5f) // Slightly larger radius for neighbor search
+                        // Usa raio ligeiramente maior para busca de partículas próximas (margem de segurança)
+                        if (distance < smoothingRadius * 1.5f)
                         {
                             particleNeighbors[baseNeighborIndex + neighborCount] = otherIdx;
                             neighborCount++;
@@ -160,11 +203,14 @@ void FindNeighbors(uint3 id : SV_DispatchThreadID)
         }
     }
     
-    // Mark end of neighbor list
     if (neighborCount < 64)
         particleNeighbors[baseNeighborIndex + neighborCount] = -1;
 }
 
+/// <summary>
+/// Kernel: Calcula densidade para cada partícula usando SPH
+/// Configuração: 256 threads por grupo (otimizado para muitas partículas)
+/// </summary>
 [numthreads(256, 1, 1)]
 void ComputeDensity(uint3 id : SV_DispatchThreadID)
 {
@@ -177,7 +223,7 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID)
     
     int baseNeighborIndex = particleIdx * 64;
     
-    // Sum contributions from all neighbors
+    // Soma contribuições de todas as neighbor particles
     for (int i = 0; i < 64; i++)
     {
         int neighborIdx = particleNeighbors[baseNeighborIndex + i];
@@ -192,12 +238,16 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID)
         }
     }
     
-    // Add self-contribution
+    // Adiciona contribuição própria (self-contribution)
     density += Poly6Kernel(0.0, smoothingRadius);
     
     particleDensities[particleIdx] = density;
 }
 
+/// <summary>
+/// Kernel: Calcula forças totais (pressão, viscosidade e colisões) para cada partícula
+/// Configuração: 256 threads por grupo (otimizado para muitas partículas)
+/// </summary>
 [numthreads(256, 1, 1)]
 void ComputeForces(uint3 id : SV_DispatchThreadID)
 {
@@ -209,12 +259,14 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
     float3 vel = particleVelocities[particleIdx];
     float density = particleDensities[particleIdx];
     
+    // Inicializa acumuladores de força
     float3 pressureForce = float3(0, 0, 0);
     float3 viscosityForce = float3(0, 0, 0);
     float3 collisionForce = float3(0, 0, 0);
     
     int baseNeighborIndex = particleIdx * 64;
     
+    // Processa todas as neighbor particles
     for (int i = 0; i < 64; i++)
     {
         int neighborIdx = particleNeighbors[baseNeighborIndex + i];
@@ -228,17 +280,17 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
         float distance = length(offset);
         float3 direction = distance > 0.0001f ? offset / distance : float3(0, 1, 0);
         
-        // Particle-particle collisions
+        // COLISÕES PARTÍCULA-PARTÍCULA (se ativadas)
         if (enableCollisions == 1 && distance < collisionRadius * 2.0f && distance > 0.0f)
         {
-            // Spring force for collision response
+            // Força de mola para resposta a colisões
             float overlap = collisionRadius * 2.0f - distance;
             if (overlap > 0.0f)
             {
-                float3 collisionDir = -direction;
+                float3 collisionDir = -direction; // Direção oposta à colisão
                 collisionForce += stiffness * overlap * collisionDir;
                 
-                // Damping
+                // Amortecimento baseado na velocidade relativa
                 float3 relVel = vel - neighborVel;
                 float velAlongNormal = dot(relVel, collisionDir);
                 if (velAlongNormal > 0.0f)
@@ -248,29 +300,33 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
             }
         }
         
-        // SPH Pressure force (using ideal gas equation: P = k(ρ - ρ₀))
+        // Forças SPH
         if (enableSPH == 1 && distance < smoothingRadius && distance > 0.0f)
         {
-            // Pressure from density difference
+            // Pressão baseada na diferença de densidade (equação de gás ideal: P = k(ρ - ρ₀))
             float pressure_i = pressureMultiplier * (density - targetDensity);
             float pressure_j = pressureMultiplier * (neighborDensity - targetDensity);
             float sharedPressure = pressure_i + pressure_j;
             
-            // Use Spiky kernel for pressure gradient
+            // Força de pressão (usa gradiente do kernel Spiky)
             pressureForce += sharedPressure * SpikyKernelGradient(distance, smoothingRadius) * direction;
             
-            // SPH Viscosity force
+            // Força de viscosidade (suaviza diferenças de velocidade)
             viscosityForce += (neighborVel - vel) * ViscosityKernelLaplacian(distance, smoothingRadius);
         }
     }
     
-    // Apply viscosity strength multiplier
+    // Aplica multiplicador de intensidade de viscosidade
     viscosityForce *= viscosityStrength;
     
-    // Combine all forces
+    // Combina todas as forças calculadas
     particleForces[particleIdx] = pressureForce + viscosityForce + collisionForce;
 }
 
+/// <summary>
+/// Kernel: Aplica forças acumuladas às velocidades das partículas
+/// Configuração: 256 threads por grupo (otimizado para muitas partículas)
+/// </summary>
 [numthreads(256, 1, 1)]
 void ApplyForces(uint3 id : SV_DispatchThreadID)
 {
@@ -278,10 +334,10 @@ void ApplyForces(uint3 id : SV_DispatchThreadID)
     if (particleIdx >= particleCount) 
         return;
     
-    // Apply forces to velocity
+    // Aplica forças à velocidade (integração explícita)
     float3 force = particleForces[particleIdx];
     particleVelocities[particleIdx] += force * dt;
     
-    // Clear force for next frame
+    // Limpa buffer de forças para o próximo passo temporal
     particleForces[particleIdx] = float3(0, 0, 0);
 }

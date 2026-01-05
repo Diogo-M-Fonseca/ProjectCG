@@ -46,7 +46,7 @@ namespace CGProject
         {
             Mesh mesh = new Mesh();
 
-            // Dependendo da "res" escolhida, haverão mais divisões nos triangulos
+            // Dependendo da "meshResolution" escolhida, haverão mais divisões nos triangulos
             // da mesh, ou seja, aumenta a resolução
             int numDiv = Mathf.Max(0, res);
             int triangleSize = numDiv + 2;
