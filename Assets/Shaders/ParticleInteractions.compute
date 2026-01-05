@@ -10,12 +10,12 @@ RWStructuredBuffer<float3> particleVelocities;
 RWStructuredBuffer<float> particleDensities;
 RWStructuredBuffer<float3> particleForces;
 
-// Spatial grid buffers
-RWStructuredBuffer<int> spatialGrid;           // Grid of particle indices
-RWStructuredBuffer<int> spatialGridCount;      // Count per cell
-RWStructuredBuffer<int> particleNeighbors;     // List of neighbors for each particle
+// Buffers da grelha espacial
+RWStructuredBuffer<int> spatialGrid;
+RWStructuredBuffer<int> spatialGridCount;
+RWStructuredBuffer<int> particleNeighbors;
 
-// Parameters
+// Parâmetros
 uint particleCount;
 uint spatialGridSizeX;
 uint spatialGridSizeY;
@@ -32,11 +32,11 @@ uint maxParticlesPerCell;
 float3 simulationBoundsMin;
 float3 simulationBoundsMax;
 
-// CHANGE: bool parameters to int (HLSL bool in constant buffers can cause issues)
+// Parâmetros booleanos para int (bool em constant buffers no HLSL pode causar problemas)
 uint enableCollisions;
 uint enableSPH;
 
-// Helper functions
+// Funções auxiliares
 uint GetGridIndex(int3 cell)
 {
     return cell.x + cell.y * spatialGridSizeX + cell.z * spatialGridSizeX * spatialGridSizeY;
@@ -51,7 +51,7 @@ int3 WorldToGrid(float3 worldPos)
     return cell;
 }
 
-// Standard SPH Kernel functions (Poly6 for density, Spiky for pressure, Viscosity kernel)
+// Funções kernel SPH padrão (Poly6 para densidade, Spiky para pressão, kernel de Viscosidade)
 float Poly6Kernel(float distance, float radius)
 {
     if (distance >= radius) return 0.0;
@@ -59,7 +59,7 @@ float Poly6Kernel(float distance, float radius)
     float pi = 3.14159265359;
     float h = radius;
     float h2 = h * h;
-    float h9 = h * h * h * h * h * h * h * h * h; // h^9 without pow()
+    float h9 = h * h * h * h * h * h * h * h * h; // h^9 sem pow()
     float value = h2 - distance * distance;
     return (315.0 / (64.0 * pi * h9)) * value * value * value;
 }
@@ -70,7 +70,7 @@ float SpikyKernelGradient(float distance, float radius)
     
     float pi = 3.14159265359;
     float h = radius;
-    float h6 = h * h * h * h * h * h; // h^6 without pow()
+    float h6 = h * h * h * h * h * h; // h^6 sem pow()
     float value = h - distance;
     return (45.0 / (pi * h6)) * value * value;
 }
@@ -81,10 +81,11 @@ float ViscosityKernelLaplacian(float distance, float radius)
     
     float pi = 3.14159265359;
     float h = radius;
-    float h6 = h * h * h * h * h * h; // h^6 without pow()
+    float h6 = h * h * h * h * h * h; // h^6 sem pow()
     return (45.0 / (pi * h6)) * (h - distance);
 }
 
+// Construir grelha espacial para pesquisa rápida de vizinhos
 [numthreads(8, 8, 4)]
 void BuildSpatialGrid(uint3 id : SV_DispatchThreadID)
 {
@@ -97,7 +98,7 @@ void BuildSpatialGrid(uint3 id : SV_DispatchThreadID)
     
     uint gridIndex = GetGridIndex(int3((int)x, (int)y, (int)z));
     
-    // Clear count for this cell
+    // Limpar contagem para esta célula
     uint baseIndex = gridIndex * maxParticlesPerCell;
     for (uint i = 0; i < maxParticlesPerCell; i++)
     {
@@ -106,6 +107,7 @@ void BuildSpatialGrid(uint3 id : SV_DispatchThreadID)
     spatialGridCount[gridIndex] = 0;
 }
 
+// Encontrar vizinhos para cada partícula
 [numthreads(256, 1, 1)]
 void FindNeighbors(uint3 id : SV_DispatchThreadID)
 {
@@ -119,7 +121,7 @@ void FindNeighbors(uint3 id : SV_DispatchThreadID)
     int neighborCount = 0;
     uint baseNeighborIndex = particleIdx * 64;
     
-    // Check current cell and neighboring cells (3x3x3 region)
+    // Verificar célula atual e células vizinhas (região 3x3x3)
     for (int dx = -1; dx <= 1; dx++)
     {
         for (int dy = -1; dy <= 1; dy++)
@@ -128,7 +130,7 @@ void FindNeighbors(uint3 id : SV_DispatchThreadID)
             {
                 int3 neighborCell = cell + int3(dx, dy, dz);
                 
-                // Check bounds
+                // Verificar limites
                 if (neighborCell.x < 0 || neighborCell.x >= (int)spatialGridSizeX ||
                     neighborCell.y < 0 || neighborCell.y >= (int)spatialGridSizeY ||
                     neighborCell.z < 0 || neighborCell.z >= (int)spatialGridSizeZ)
@@ -138,18 +140,18 @@ void FindNeighbors(uint3 id : SV_DispatchThreadID)
                 int count = spatialGridCount[gridIndex];
                 uint baseGridIndex = gridIndex * maxParticlesPerCell;
                 
-                // Check all particles in this cell
+                // Verificar todas as partículas nesta célula
                 for (int i = 0; i < count && neighborCount < 64; i++)
                 {
                     int otherIdx = spatialGrid[baseGridIndex + i];
                     
                     if (otherIdx != (int)particleIdx && otherIdx >= 0)
                     {
-                        // Check if within smoothing radius
+                        // Verificar se está dentro do raio de suavização
                         float3 otherPos = particlePositions[otherIdx];
                         float distance = length(pos - otherPos);
                         
-                        if (distance < smoothingRadius * 1.5f) // Slightly larger radius for neighbor search
+                        if (distance < smoothingRadius * 1.5f)
                         {
                             particleNeighbors[baseNeighborIndex + neighborCount] = otherIdx;
                             neighborCount++;
@@ -160,11 +162,12 @@ void FindNeighbors(uint3 id : SV_DispatchThreadID)
         }
     }
     
-    // Mark end of neighbor list
+    // Marcar fim da lista de vizinhos
     if (neighborCount < 64)
         particleNeighbors[baseNeighborIndex + neighborCount] = -1;
 }
 
+// Calcular densidade usando o kernel Poly6
 [numthreads(256, 1, 1)]
 void ComputeDensity(uint3 id : SV_DispatchThreadID)
 {
@@ -177,7 +180,7 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID)
     
     uint baseNeighborIndex = particleIdx * 64;
     
-    // Sum contributions from all neighbors
+    // Somar contribuições de todos os vizinhos
     for (uint i = 0; i < 64; i++)
     {
         int neighborIdx = particleNeighbors[baseNeighborIndex + i];
@@ -192,12 +195,13 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID)
         }
     }
     
-    // Add self-contribution
+    // Adicionar contribuição própria
     density += Poly6Kernel(0.0, smoothingRadius);
     
     particleDensities[particleIdx] = density;
 }
 
+// Calcular forças (pressão, viscosidade e colisões)
 [numthreads(256, 1, 1)]
 void ComputeForces(uint3 id : SV_DispatchThreadID)
 {
@@ -228,17 +232,17 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
         float distance = length(offset);
         float3 direction = distance > 0.0001f ? offset / distance : float3(0, 1, 0);
         
-        // Particle-particle collisions
+        // Colisões entre partículas
         if (enableCollisions == 1 && distance < collisionRadius * 2.0f && distance > 0.0f)
         {
-            // Spring force for collision response
+            // Força de mola para resposta a colisões
             float overlap = collisionRadius * 2.0f - distance;
             if (overlap > 0.0f)
             {
                 float3 collisionDir = -direction;
                 collisionForce += stiffness * overlap * collisionDir;
                 
-                // Damping
+                // Amortecimento
                 float3 relVel = vel - neighborVel;
                 float velAlongNormal = dot(relVel, collisionDir);
                 if (velAlongNormal > 0.0f)
@@ -248,29 +252,30 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
             }
         }
         
-        // SPH Pressure force (using ideal gas equation: P = k(ρ - ρ₀))
+        // Força de pressão SPH (usando equação do gás ideal: P = k(ρ - ρ₀))
         if (enableSPH == 1 && distance < smoothingRadius && distance > 0.0f)
         {
-            // Pressure from density difference
+            // Pressão da diferença de densidade
             float pressure_i = pressureMultiplier * (density - targetDensity);
             float pressure_j = pressureMultiplier * (neighborDensity - targetDensity);
             float sharedPressure = pressure_i + pressure_j;
             
-            // Use Spiky kernel for pressure gradient
+            // Usar kernel Spiky para gradiente de pressão
             pressureForce += sharedPressure * SpikyKernelGradient(distance, smoothingRadius) * direction;
             
-            // SPH Viscosity force
+            // Força de viscosidade SPH
             viscosityForce += (neighborVel - vel) * ViscosityKernelLaplacian(distance, smoothingRadius);
         }
     }
     
-    // Apply viscosity strength multiplier
+    // Aplicar multiplicador de força de viscosidade
     viscosityForce *= viscosityStrength;
     
-    // Combine all forces
+    // Combinar todas as forças
     particleForces[particleIdx] = pressureForce + viscosityForce + collisionForce;
 }
 
+// Aplicar forças às velocidades
 [numthreads(256, 1, 1)]
 void ApplyForces(uint3 id : SV_DispatchThreadID)
 {
@@ -278,10 +283,10 @@ void ApplyForces(uint3 id : SV_DispatchThreadID)
     if (particleIdx >= particleCount) 
         return;
     
-    // Apply forces to velocity
+    // Aplicar forças à velocidade
     float3 force = particleForces[particleIdx];
     particleVelocities[particleIdx] += force * dt;
     
-    // Clear force for next frame
+    // Limpar força para o próximo frame
     particleForces[particleIdx] = float3(0, 0, 0);
 }
