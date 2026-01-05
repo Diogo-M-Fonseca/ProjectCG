@@ -1,275 +1,266 @@
 #pragma kernel ClearGrid
 #pragma kernel TransferToGrid
 #pragma kernel NormalizeGrid
-#pragma kernel AdvectGridVelocity
 #pragma kernel ComputeDivergence
 #pragma kernel JacobiPressure
 #pragma kernel SubtractPressureGradient
 #pragma kernel GridToParticles
-#define FP_SCALE 100.0
+#pragma kernel AdvectVelocity
 
-RWStructuredBuffer<uint> gridDensity;
-
-RWStructuredBuffer<int3> gridVelocityInt; 
-RWStructuredBuffer<float3> gridVelocityFloat; 
-
-StructuredBuffer<float3> gridVelocityRead; 
-RWStructuredBuffer<float3> gridVelocityWrite; 
-
+// Buffers
+RWStructuredBuffer<int3> gridVelocityInt;
+RWStructuredBuffer<float3> gridVelocityFloat;
 RWStructuredBuffer<uint> gridWeight;
 
-StructuredBuffer<float3> particlePositions;
-StructuredBuffer<float3> particleVelocities;
+RWStructuredBuffer<float3> particlePositions;
+RWStructuredBuffer<float3> particleVelocities;
 
 RWStructuredBuffer<float> divergence;
+RWStructuredBuffer<float> pressure;
+RWStructuredBuffer<float> pressureTemp; 
 
-RWStructuredBuffer<float> pressureRead;
-RWStructuredBuffer<float> pressureWrite;
+int numJacobiIterations = 40;
 
+// Parameters
 int gridSizeX;
 int gridSizeY;
 int gridSizeZ;
-uint particleCount;
-float particleMass;
+int particleCount;
 float dt;
 float cellSize;
 float flipRatio;
+float3 gravity;
 
-// Clear grid buffers
+// NEW: Add particleCollisionRadius parameter
+float particleCollisionRadius;
+
+#define FP_SCALE 1000.0
+
+// Helper function
+int GetIndex(int x, int y, int z)
+{
+    return x + y * gridSizeX + z * gridSizeX * gridSizeZ;
+}
+
 [numthreads(8, 8, 4)]
-void ClearGrid(uint3 id : SV_DispatchThreadID) {
+void ClearGrid(uint3 id : SV_DispatchThreadID)
+{
     uint x = id.x;
     uint y = id.y;
     uint z = id.z;
     
-    if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ) return;
-    
-    int index = (int)(x + y * gridSizeX + z * gridSizeX * gridSizeY);
-    gridDensity[index] = 0;
-    gridVelocityInt[index] = int3(0, 0, 0);
-    gridWeight[index] = 0;
-}
-
-void DistributeToCell(int x, int y, int z, float weight, float3 velContrib)
-{
-    if (x < 0 || x >= gridSizeX || y < 0 || y >= gridSizeY || z < 0 || z >= gridSizeZ)
+    if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ) 
         return;
     
-    int index = x + y * gridSizeX + z * gridSizeX * gridSizeY;
-    
-    uint w = (uint) (weight * FP_SCALE);
-
-    InterlockedAdd(gridWeight[index], w);
-    
-    InterlockedAdd(gridVelocityInt[index].x, (int) (velContrib.x * weight));
-    InterlockedAdd(gridVelocityInt[index].y, (int) (velContrib.y * weight));
-    InterlockedAdd(gridVelocityInt[index].z, (int) (velContrib.z * weight));
-    
-    InterlockedAdd(gridDensity[index], (uint) (weight * particleMass * FP_SCALE));
+    int index = GetIndex(x, y, z);
+    gridVelocityInt[index] = int3(0, 0, 0);
+    gridVelocityFloat[index] = float3(0, 0, 0);
+    gridWeight[index] = 0;
+    divergence[index] = 0.0;
+    pressure[index] = 0.0;
+    pressureTemp[index] = 0.0;
 }
 
-// Transfer particles to grid with trilinear interpolation
 [numthreads(256, 1, 1)]
-void TransferToGrid(uint3 id : SV_DispatchThreadID) {
-    
+void TransferToGrid(uint3 id : SV_DispatchThreadID)
+{
     uint i = id.x;
-    if (i >= particleCount) return;
+    if (i >= particleCount) 
+        return;
     
     float3 pos = particlePositions[i];
     float3 vel = particleVelocities[i];
     
-    int x0 = (int) floor(pos.x);
-    int y0 = (int) floor(pos.y);
-    int z0 = (int) floor(pos.z);
+    // Convert to grid cell
+    int3 cell = (int3)floor(pos / cellSize);
+    cell.x = clamp(cell.x, 0, gridSizeX - 1);
+    cell.y = clamp(cell.y, 0, gridSizeY - 1);
+    cell.z = clamp(cell.z, 0, gridSizeZ - 1);
     
-    x0 = clamp(x0, 0, gridSizeX - 2);
-    y0 = clamp(y0, 0, gridSizeY - 2);
-    z0 = clamp(z0, 0, gridSizeZ - 2);
+    int index = GetIndex(cell.x, cell.y, cell.z);
     
-    float tx = pos.x - x0;
-    float ty = pos.y - y0;
-    float tz = pos.z - z0;
-    
-    // Calculate weights for 8 neighboring cells
-    float w000 = (1 - tx) * (1 - ty) * (1 - tz);
-    float w100 = tx * (1 - ty) * (1 - tz);
-    float w010 = (1 - tx) * ty * (1 - tz);
-    float w110 = tx * ty * (1 - tz);
-    float w001 = (1 - tx) * (1 - ty) * tz;
-    float w101 = tx * (1 - ty) * tz;
-    float w011 = (1 - tx) * ty * tz;
-    float w111 = tx * ty * tz;
-    
-    float3 velContrib = vel * FP_SCALE;
-    
-    // Distribute to 8 neighboring cells
-    DistributeToCell(x0, y0, z0, w000, velContrib);
-    DistributeToCell(x0 + 1, y0, z0, w100, velContrib);
-    DistributeToCell(x0, y0 + 1, z0, w010, velContrib);
-    DistributeToCell(x0 + 1, y0 + 1, z0, w110, velContrib);
-    DistributeToCell(x0, y0, z0 + 1, w001, velContrib);
-    DistributeToCell(x0 + 1, y0, z0 + 1, w101, velContrib);
-    DistributeToCell(x0, y0 + 1, z0 + 1, w011, velContrib);
-    DistributeToCell(x0 + 1, y0 + 1, z0 + 1, w111, velContrib);
+    // Add to grid
+    InterlockedAdd(gridVelocityInt[index].x, (int)(vel.x * FP_SCALE));
+    InterlockedAdd(gridVelocityInt[index].y, (int)(vel.y * FP_SCALE));
+    InterlockedAdd(gridVelocityInt[index].z, (int)(vel.z * FP_SCALE));
+    InterlockedAdd(gridWeight[index], 1);
 }
 
-// Normalize grid values by weight
 [numthreads(8, 8, 4)]
 void NormalizeGrid(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+    uint x = id.x;
+    uint y = id.y;
+    uint z = id.z;
+    
+    if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ)
         return;
     
-    int index = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
+    int index = GetIndex(x, y, z);
     
     uint weight = gridWeight[index];
     
     if (weight > 0)
     {
-        float invW = 1.0 / (float) weight;
-
-        gridVelocityFloat[index] = 
-        float3(
-            (float) gridVelocityInt[index].x,
-            (float) gridVelocityInt[index].y,
-            (float) gridVelocityInt[index].z
-              ) * invW / FP_SCALE;
+        float invW = 1.0 / (float)weight;
+        float3 vel = float3(
+            (float)gridVelocityInt[index].x,
+            (float)gridVelocityInt[index].y,
+            (float)gridVelocityInt[index].z
+        ) * invW / FP_SCALE;
+        
+        // Add gravity
+        vel += gravity * dt;
+        
+        gridVelocityFloat[index] = vel;
     }
     else
     {
-        gridVelocityFloat[index] = float3(0, 0, 0);
+        gridVelocityFloat[index] = gravity * dt;
     }
 }
 
-float3 SampleGridVelocity(float3 cell)
-{
-    cell = clamp(cell, 0.5, float3(gridSizeX, gridSizeY, gridSizeZ) - 1.5);
-
-    int3 i0 = (int3) floor(cell);
-    int3 i1 = i0 + 1;
-    float3 t = cell - i0;
-
-    #define IDX(x,y,z) ((x) + (y)*gridSizeX + (z)*gridSizeX*gridSizeY)
-
-    float3 c000 = gridVelocityRead[IDX(i0.x, i0.y, i0.z)];
-    float3 c100 = gridVelocityRead[IDX(i1.x, i0.y, i0.z)];
-    float3 c010 = gridVelocityRead[IDX(i0.x, i1.y, i0.z)];
-    float3 c110 = gridVelocityRead[IDX(i1.x, i1.y, i0.z)];
-    float3 c001 = gridVelocityRead[IDX(i0.x, i0.y, i1.z)];
-    float3 c101 = gridVelocityRead[IDX(i1.x, i0.y, i1.z)];
-    float3 c011 = gridVelocityRead[IDX(i0.x, i1.y, i1.z)];
-    float3 c111 = gridVelocityRead[IDX(i1.x, i1.y, i1.z)];
-
-    float3 c00 = lerp(c000, c100, t.x);
-    float3 c10 = lerp(c010, c110, t.x);
-    float3 c01 = lerp(c001, c101, t.x);
-    float3 c11 = lerp(c011, c111, t.x);
-
-    float3 c0 = lerp(c00, c10, t.y);
-    float3 c1 = lerp(c01, c11, t.y);
-
-    return lerp(c0, c1, t.z);
-}
-
 [numthreads(8, 8, 4)]
-void AdvectGridVelocity(uint3 id : SV_DispatchThreadID)
+void AdvectVelocity(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+    uint x = id.x;
+    uint y = id.y;
+    uint z = id.z;
+    
+    if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ)
         return;
 
-    int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
-
-    float3 pos = float3(id) + 0.5;
+    int idx = GetIndex(x, y, z);
     
-    float3 vel = gridVelocityRead[idx];
-
-    float3 prevPos = pos - dt * vel;
-
-    gridVelocityWrite[idx] = SampleGridVelocity(prevPos);
+    // Get velocity at current cell
+    float3 vel = gridVelocityFloat[idx];
+    
+    // Trace back in time (semi-Lagrangian advection)
+    float3 tracePos = float3(x, y, z) - vel * dt / cellSize;
+    
+    // Clamp to grid bounds
+    tracePos.x = clamp(tracePos.x, 0.5f, gridSizeX - 0.5f);
+    tracePos.y = clamp(tracePos.y, 0.5f, gridSizeY - 0.5f);
+    tracePos.z = clamp(tracePos.z, 0.5f, gridSizeZ - 0.5f);
+    
+    // Sample velocity at traced position (trilinear interpolation)
+    int3 cell = (int3)floor(tracePos);
+    float3 frac = tracePos - float3(cell);
+    
+    // Get indices for 8 surrounding cells
+    int idx000 = GetIndex(cell.x, cell.y, cell.z);
+    int idx100 = GetIndex(cell.x + 1, cell.y, cell.z);
+    int idx010 = GetIndex(cell.x, cell.y + 1, cell.z);
+    int idx110 = GetIndex(cell.x + 1, cell.y + 1, cell.z);
+    int idx001 = GetIndex(cell.x, cell.y, cell.z + 1);
+    int idx101 = GetIndex(cell.x + 1, cell.y, cell.z + 1);
+    int idx011 = GetIndex(cell.x, cell.y + 1, cell.z + 1);
+    int idx111 = GetIndex(cell.x + 1, cell.y + 1, cell.z + 1);
+    
+    // Get velocities
+    float3 v000 = gridVelocityFloat[idx000];
+    float3 v100 = gridVelocityFloat[idx100];
+    float3 v010 = gridVelocityFloat[idx010];
+    float3 v110 = gridVelocityFloat[idx110];
+    float3 v001 = gridVelocityFloat[idx001];
+    float3 v101 = gridVelocityFloat[idx101];
+    float3 v011 = gridVelocityFloat[idx011];
+    float3 v111 = gridVelocityFloat[idx111];
+    
+    // Trilinear interpolation
+    float3 advectedVel = 
+        v000 * (1 - frac.x) * (1 - frac.y) * (1 - frac.z) +
+        v100 * frac.x * (1 - frac.y) * (1 - frac.z) +
+        v010 * (1 - frac.x) * frac.y * (1 - frac.z) +
+        v110 * frac.x * frac.y * (1 - frac.z) +
+        v001 * (1 - frac.x) * (1 - frac.y) * frac.z +
+        v101 * frac.x * (1 - frac.y) * frac.z +
+        v011 * (1 - frac.x) * frac.y * frac.z +
+        v111 * frac.x * frac.y * frac.z;
+    
+    // Update velocity with advection
+    gridVelocityFloat[idx] = advectedVel;
 }
 
 [numthreads(8, 8, 4)]
 void ComputeDivergence(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+    uint x = id.x;
+    uint y = id.y;
+    uint z = id.z;
+    
+    if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ)
         return;
 
-    int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
-
-    #define IDX(x,y,z) ((x) + (y)*gridSizeX + (z)*gridSizeX*gridSizeY)
-
-    int x = id.x;
-    int y = id.y;
-    int z = id.z;
-
-    float3 vL = (x > 0) ? gridVelocityRead[IDX(x-1, y, z)] : float3(0, 0, 0);
-    float3 vR = (x < gridSizeX - 1) ? gridVelocityRead[IDX(x+1, y, z)] : float3(0, 0, 0);
-    float3 vD = (y > 0) ? gridVelocityRead[IDX(x, y-1, z)] : float3(0, 0, 0);
-    float3 vU = (y < gridSizeY - 1) ? gridVelocityRead[IDX(x, y+1, z)] : float3(0, 0, 0);
-    float3 vB = (z > 0) ? gridVelocityRead[IDX(x, y, z-1)] : float3(0, 0, 0);
-    float3 vF = (z < gridSizeZ - 1) ? gridVelocityRead[IDX(x, y, z+1)] : float3(0, 0, 0);
-
-    float div =
-        (vR.x - vL.x +
-         vU.y - vD.y +
-         vF.z - vB.z) / (2.0 * cellSize);
-
+    int idx = GetIndex(x, y, z);
+    
+    // Get velocities from neighboring cells
+    float3 vL = (x > 0) ? gridVelocityFloat[GetIndex(x-1, y, z)] : float3(0, 0, 0);
+    float3 vR = (x < gridSizeX - 1) ? gridVelocityFloat[GetIndex(x+1, y, z)] : float3(0, 0, 0);
+    float3 vD = (y > 0) ? gridVelocityFloat[GetIndex(x, y-1, z)] : float3(0, 0, 0);
+    float3 vU = (y < gridSizeY - 1) ? gridVelocityFloat[GetIndex(x, y+1, z)] : float3(0, 0, 0);
+    float3 vB = (z > 0) ? gridVelocityFloat[GetIndex(x, y, z-1)] : float3(0, 0, 0);
+    float3 vF = (z < gridSizeZ - 1) ? gridVelocityFloat[GetIndex(x, y, z+1)] : float3(0, 0, 0);
+    
+    // Compute divergence (how much fluid is expanding/contracting at this point)
+    float div = (vR.x - vL.x + vU.y - vD.y + vF.z - vB.z) / (2.0 * cellSize);
     divergence[idx] = div;
 }
 
 [numthreads(8, 8, 4)]
 void JacobiPressure(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+    uint x = id.x;
+    uint y = id.y;
+    uint z = id.z;
+    
+    if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ)
         return;
 
-    int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
-
-    #define IDX(x,y,z) ((x) + (y)*gridSizeX + (z)*gridSizeX*gridSizeY)
-
-    int x = id.x;
-    int y = id.y;
-    int z = id.z;
-
-    float pL = (x > 0) ? pressureRead[IDX(x-1, y, z)] : 0.0;
-    float pR = (x < gridSizeX - 1) ? pressureRead[IDX(x+1, y, z)] : 0.0;
-    float pD = (y > 0) ? pressureRead[IDX(x, y-1, z)] : 0.0;
-    float pU = (y < gridSizeY - 1) ? pressureRead[IDX(x, y+1, z)] : 0.0;
-    float pB = (z > 0) ? pressureRead[IDX(x, y, z-1)] : 0.0;
-    float pF = (z < gridSizeZ - 1) ? pressureRead[IDX(x, y, z+1)] : 0.0;
-
+    int idx = GetIndex(x, y, z);
+    
+    // Get pressures from neighboring cells
+    float pL = (x > 0) ? pressure[GetIndex(x-1, y, z)] : 0.0;
+    float pR = (x < gridSizeX - 1) ? pressure[GetIndex(x+1, y, z)] : 0.0;
+    float pD = (y > 0) ? pressure[GetIndex(x, y-1, z)] : 0.0;
+    float pU = (y < gridSizeY - 1) ? pressure[GetIndex(x, y+1, z)] : 0.0;
+    float pB = (z > 0) ? pressure[GetIndex(x, y, z-1)] : 0.0;
+    float pF = (z < gridSizeZ - 1) ? pressure[GetIndex(x, y, z+1)] : 0.0;
+    
     float div = divergence[idx];
-
-    pressureWrite[idx] = (pL + pR + pD + pU + pB + pF - div * cellSize * cellSize) / 6.0;
+    
+    // Jacobi iteration: solve for pressure that makes velocity divergence-free
+    pressureTemp[idx] = (pL + pR + pD + pU + pB + pF - div * cellSize * cellSize) / 6.0;
 }
 
 [numthreads(8, 8, 4)]
 void SubtractPressureGradient(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x >= gridSizeX || id.y >= gridSizeY || id.z >= gridSizeZ)
+    uint x = id.x;
+    uint y = id.y;
+    uint z = id.z;
+    
+    if (x >= gridSizeX || y >= gridSizeY || z >= gridSizeZ)
         return;
 
-    int idx = id.x + id.y * gridSizeX + id.z * gridSizeX * gridSizeY;
-
-    #define IDX(x,y,z) ((x) + (y)*gridSizeX + (z)*gridSizeX*gridSizeY)
-
-    int x = id.x;
-    int y = id.y;
-    int z = id.z;
-
-    float pL = (x > 0) ? pressureRead[IDX(x-1, y, z)] : 0.0;
-    float pR = (x < gridSizeX - 1) ? pressureRead[IDX(x+1, y, z)] : 0.0;
-    float pD = (y > 0) ? pressureRead[IDX(x, y-1, z)] : 0.0;
-    float pU = (y < gridSizeY - 1) ? pressureRead[IDX(x, y+1, z)] : 0.0;
-    float pB = (z > 0) ? pressureRead[IDX(x, y, z-1)] : 0.0;
-    float pF = (z < gridSizeZ - 1) ? pressureRead[IDX(x, y, z+1)] : 0.0;
-
+    int idx = GetIndex(x, y, z);
+    
+    // Get pressures from neighboring cells
+    float pL = (x > 0) ? pressure[GetIndex(x-1, y, z)] : 0.0;
+    float pR = (x < gridSizeX - 1) ? pressure[GetIndex(x+1, y, z)] : 0.0;
+    float pD = (y > 0) ? pressure[GetIndex(x, y-1, z)] : 0.0;
+    float pU = (y < gridSizeY - 1) ? pressure[GetIndex(x, y+1, z)] : 0.0;
+    float pB = (z > 0) ? pressure[GetIndex(x, y, z-1)] : 0.0;
+    float pF = (z < gridSizeZ - 1) ? pressure[GetIndex(x, y, z+1)] : 0.0;
+    
+    // Compute pressure gradient
     float3 gradP;
     gradP.x = (pR - pL) / (2.0 * cellSize);
     gradP.y = (pU - pD) / (2.0 * cellSize);
     gradP.z = (pF - pB) / (2.0 * cellSize);
-
-    gridVelocityWrite[idx] -= gradP;
+    
+    // Subtract pressure gradient from velocity
+    gridVelocityFloat[idx] = gridVelocityFloat[idx] - gradP;
 }
 
 [numthreads(256, 1, 1)]
@@ -278,20 +269,80 @@ void GridToParticles(uint3 id : SV_DispatchThreadID)
     uint i = id.x;
     if (i >= particleCount)
         return;
-
+    
     float3 pos = particlePositions[i];
     float3 vel = particleVelocities[i];
-
-    float3 cellPos = pos / cellSize; 
-    float3 gridVel = SampleGridVelocity(cellPos);
-
-    float3 deltaVel = gridVel - vel; 
-
-    vel += flipRatio * deltaVel * dt;
-
+    
+    // Convert to grid space for velocity sampling
+    float3 gridPos = pos / cellSize;
+    
+    // TRILINEAR INTERPOLATION
+    int3 cell = (int3)floor(gridPos);
+    float3 frac = gridPos - float3(cell);
+    
+    // Get indices for 8 surrounding cells
+    int idx000 = GetIndex(cell.x, cell.y, cell.z);
+    int idx100 = GetIndex(cell.x + 1, cell.y, cell.z);
+    int idx010 = GetIndex(cell.x, cell.y + 1, cell.z);
+    int idx110 = GetIndex(cell.x + 1, cell.y + 1, cell.z);
+    int idx001 = GetIndex(cell.x, cell.y, cell.z + 1);
+    int idx101 = GetIndex(cell.x + 1, cell.y, cell.z + 1);
+    int idx011 = GetIndex(cell.x, cell.y + 1, cell.z + 1);
+    int idx111 = GetIndex(cell.x + 1, cell.y + 1, cell.z + 1);
+    
+    // Get velocities
+    float3 v000 = gridVelocityFloat[idx000];
+    float3 v100 = gridVelocityFloat[idx100];
+    float3 v010 = gridVelocityFloat[idx010];
+    float3 v110 = gridVelocityFloat[idx110];
+    float3 v001 = gridVelocityFloat[idx001];
+    float3 v101 = gridVelocityFloat[idx101];
+    float3 v011 = gridVelocityFloat[idx011];
+    float3 v111 = gridVelocityFloat[idx111];
+    
+    // Trilinear interpolation
+    float3 gridVel = 
+        v000 * (1 - frac.x) * (1 - frac.y) * (1 - frac.z) +
+        v100 * frac.x * (1 - frac.y) * (1 - frac.z) +
+        v010 * (1 - frac.x) * frac.y * (1 - frac.z) +
+        v110 * frac.x * frac.y * (1 - frac.z) +
+        v001 * (1 - frac.x) * (1 - frac.y) * frac.z +
+        v101 * frac.x * (1 - frac.y) * frac.z +
+        v011 * (1 - frac.x) * frac.y * frac.z +
+        v111 * frac.x * frac.y * frac.z;
+    
+    // FLIP update: blend between PIC (grid velocity) and FLIP (velocity difference)
+    float3 deltaVel = gridVel - vel;
+    vel += flipRatio * deltaVel;
+    
+    // Update position with semi-implicit Euler
     pos += vel * dt;
-    pos = clamp(pos, 0.5, float3(gridSizeX, gridSizeY, gridSizeZ) - 1.5);
-
+    
+    // Boundary collisions
+    float margin = particleCollisionRadius;
+    float bounce = 0.5f;
+    float friction = 0.95f;
+    
+    if (pos.y < margin) 
+    { 
+        pos.y = margin; 
+        vel.y = abs(vel.y) * bounce;
+        vel.x *= friction;
+        vel.z *= friction;
+    }
+    if (pos.y > gridSizeY * cellSize - margin) 
+    { 
+        pos.y = gridSizeY * cellSize - margin; 
+        vel.y = -abs(vel.y) * bounce;
+        vel.x *= friction;
+        vel.z *= friction;
+    }
+    // Add x and z boundaries
+    if (pos.x < margin) { pos.x = margin; vel.x = abs(vel.x) * bounce; vel.y *= friction; vel.z *= friction; }
+    if (pos.x > gridSizeX * cellSize - margin) { pos.x = gridSizeX * cellSize - margin; vel.x = -abs(vel.x) * bounce; vel.y *= friction; vel.z *= friction; }
+    if (pos.z < margin) { pos.z = margin; vel.z = abs(vel.z) * bounce; vel.x *= friction; vel.y *= friction; }
+    if (pos.z > gridSizeZ * cellSize - margin) { pos.z = gridSizeZ * cellSize - margin; vel.z = -abs(vel.z) * bounce; vel.x *= friction; vel.y *= friction; }
+    
     particleVelocities[i] = vel;
     particlePositions[i] = pos;
 }

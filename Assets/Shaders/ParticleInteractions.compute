@@ -1,0 +1,287 @@
+#pragma kernel BuildSpatialGrid
+#pragma kernel FindNeighbors
+#pragma kernel ComputeDensity
+#pragma kernel ComputeForces
+#pragma kernel ApplyForces
+
+// Buffers
+RWStructuredBuffer<float3> particlePositions;
+RWStructuredBuffer<float3> particleVelocities;
+RWStructuredBuffer<float> particleDensities;
+RWStructuredBuffer<float3> particleForces;
+
+// Spatial grid buffers
+RWStructuredBuffer<int> spatialGrid;           // Grid of particle indices
+RWStructuredBuffer<int> spatialGridCount;      // Count per cell
+RWStructuredBuffer<int> particleNeighbors;     // List of neighbors for each particle
+
+// Parameters
+int particleCount;
+int spatialGridSizeX;
+int spatialGridSizeY;
+int spatialGridSizeZ;
+float dt;
+float smoothingRadius;
+float collisionRadius;
+float targetDensity;
+float pressureMultiplier;
+float viscosityStrength;
+float stiffness;
+float damping;
+int maxParticlesPerCell;
+float3 simulationBoundsMin;
+float3 simulationBoundsMax;
+
+// CHANGE: bool parameters to int (HLSL bool in constant buffers can cause issues)
+int enableCollisions;
+int enableSPH;
+
+// Helper functions
+int GetGridIndex(int3 cell)
+{
+    return cell.x + cell.y * spatialGridSizeX + cell.z * spatialGridSizeX * spatialGridSizeY;
+}
+
+int3 WorldToGrid(float3 worldPos)
+{
+    int3 cell;
+    cell.x = clamp((int)((worldPos.x - simulationBoundsMin.x) / collisionRadius), 0, spatialGridSizeX - 1);
+    cell.y = clamp((int)((worldPos.y - simulationBoundsMin.y) / collisionRadius), 0, spatialGridSizeY - 1);
+    cell.z = clamp((int)((worldPos.z - simulationBoundsMin.z) / collisionRadius), 0, spatialGridSizeZ - 1);
+    return cell;
+}
+
+// Standard SPH Kernel functions (Poly6 for density, Spiky for pressure, Viscosity kernel)
+float Poly6Kernel(float distance, float radius)
+{
+    if (distance >= radius) return 0.0;
+    
+    float pi = 3.14159265359;
+    float h = radius;
+    float h2 = h * h;
+    float h9 = pow(h, 9);
+    float value = h2 - distance * distance;
+    return (315.0 / (64.0 * pi * h9)) * value * value * value;
+}
+
+float SpikyKernelGradient(float distance, float radius)
+{
+    if (distance >= radius) return 0.0;
+    
+    float pi = 3.14159265359;
+    float h = radius;
+    float h6 = pow(h, 6);
+    float value = h - distance;
+    return (45.0 / (pi * h6)) * value * value;
+}
+
+float ViscosityKernelLaplacian(float distance, float radius)
+{
+    if (distance >= radius) return 0.0;
+    
+    float pi = 3.14159265359;
+    float h = radius;
+    float h6 = pow(h, 6);
+    return (45.0 / (pi * h6)) * (h - distance);
+}
+
+[numthreads(8, 8, 4)]
+void BuildSpatialGrid(uint3 id : SV_DispatchThreadID)
+{
+    uint x = id.x;
+    uint y = id.y;
+    uint z = id.z;
+    
+    if (x >= spatialGridSizeX || y >= spatialGridSizeY || z >= spatialGridSizeZ) 
+        return;
+    
+    int gridIndex = GetGridIndex(int3(x, y, z));
+    
+    // Clear count for this cell
+    int baseIndex = gridIndex * maxParticlesPerCell;
+    for (int i = 0; i < maxParticlesPerCell; i++)
+    {
+        spatialGrid[baseIndex + i] = -1;
+    }
+    spatialGridCount[gridIndex] = 0;
+}
+
+[numthreads(256, 1, 1)]
+void FindNeighbors(uint3 id : SV_DispatchThreadID)
+{
+    uint particleIdx = id.x;
+    if (particleIdx >= particleCount) 
+        return;
+    
+    float3 pos = particlePositions[particleIdx];
+    int3 cell = WorldToGrid(pos);
+    
+    int neighborCount = 0;
+    int baseNeighborIndex = particleIdx * 64;
+    
+    // Check current cell and neighboring cells (3x3x3 region)
+    for (int dx = -1; dx <= 1; dx++)
+    {
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                int3 neighborCell = cell + int3(dx, dy, dz);
+                
+                // Check bounds
+                if (neighborCell.x < 0 || neighborCell.x >= spatialGridSizeX ||
+                    neighborCell.y < 0 || neighborCell.y >= spatialGridSizeY ||
+                    neighborCell.z < 0 || neighborCell.z >= spatialGridSizeZ)
+                    continue;
+                
+                int gridIndex = GetGridIndex(neighborCell);
+                int count = spatialGridCount[gridIndex];
+                int baseGridIndex = gridIndex * maxParticlesPerCell;
+                
+                // Check all particles in this cell
+                for (int i = 0; i < count && neighborCount < 64; i++)
+                {
+                    int otherIdx = spatialGrid[baseGridIndex + i];
+                    
+                    if (otherIdx != particleIdx && otherIdx >= 0)
+                    {
+                        // Check if within smoothing radius
+                        float3 otherPos = particlePositions[otherIdx];
+                        float distance = length(pos - otherPos);
+                        
+                        if (distance < smoothingRadius * 1.5f) // Slightly larger radius for neighbor search
+                        {
+                            particleNeighbors[baseNeighborIndex + neighborCount] = otherIdx;
+                            neighborCount++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Mark end of neighbor list
+    if (neighborCount < 64)
+        particleNeighbors[baseNeighborIndex + neighborCount] = -1;
+}
+
+[numthreads(256, 1, 1)]
+void ComputeDensity(uint3 id : SV_DispatchThreadID)
+{
+    uint particleIdx = id.x;
+    if (particleIdx >= particleCount) 
+        return;
+    
+    float3 pos = particlePositions[particleIdx];
+    float density = 0.0f;
+    
+    int baseNeighborIndex = particleIdx * 64;
+    
+    // Sum contributions from all neighbors
+    for (int i = 0; i < 64; i++)
+    {
+        int neighborIdx = particleNeighbors[baseNeighborIndex + i];
+        if (neighborIdx == -1) break;
+        
+        float3 neighborPos = particlePositions[neighborIdx];
+        float distance = length(pos - neighborPos);
+        
+        if (distance < smoothingRadius)
+        {
+            density += Poly6Kernel(distance, smoothingRadius);
+        }
+    }
+    
+    // Add self-contribution
+    density += Poly6Kernel(0.0, smoothingRadius);
+    
+    particleDensities[particleIdx] = density;
+}
+
+[numthreads(256, 1, 1)]
+void ComputeForces(uint3 id : SV_DispatchThreadID)
+{
+    uint particleIdx = id.x;
+    if (particleIdx >= particleCount) 
+        return;
+    
+    float3 pos = particlePositions[particleIdx];
+    float3 vel = particleVelocities[particleIdx];
+    float density = particleDensities[particleIdx];
+    
+    float3 pressureForce = float3(0, 0, 0);
+    float3 viscosityForce = float3(0, 0, 0);
+    float3 collisionForce = float3(0, 0, 0);
+    
+    int baseNeighborIndex = particleIdx * 64;
+    
+    for (int i = 0; i < 64; i++)
+    {
+        int neighborIdx = particleNeighbors[baseNeighborIndex + i];
+        if (neighborIdx == -1) break;
+        
+        float3 neighborPos = particlePositions[neighborIdx];
+        float3 neighborVel = particleVelocities[neighborIdx];
+        float neighborDensity = particleDensities[neighborIdx];
+        
+        float3 offset = neighborPos - pos;
+        float distance = length(offset);
+        float3 direction = distance > 0.0001f ? offset / distance : float3(0, 1, 0);
+        
+        // Particle-particle collisions
+        if (enableCollisions == 1 && distance < collisionRadius * 2.0f && distance > 0.0f)
+        {
+            // Spring force for collision response
+            float overlap = collisionRadius * 2.0f - distance;
+            if (overlap > 0.0f)
+            {
+                float3 collisionDir = -direction;
+                collisionForce += stiffness * overlap * collisionDir;
+                
+                // Damping
+                float3 relVel = vel - neighborVel;
+                float velAlongNormal = dot(relVel, collisionDir);
+                if (velAlongNormal > 0.0f)
+                {
+                    collisionForce += damping * velAlongNormal * collisionDir;
+                }
+            }
+        }
+        
+        // SPH Pressure force (using ideal gas equation: P = k(ρ - ρ₀))
+        if (enableSPH == 1 && distance < smoothingRadius && distance > 0.0f)
+        {
+            // Pressure from density difference
+            float pressure_i = pressureMultiplier * (density - targetDensity);
+            float pressure_j = pressureMultiplier * (neighborDensity - targetDensity);
+            float sharedPressure = pressure_i + pressure_j;
+            
+            // Use Spiky kernel for pressure gradient
+            pressureForce += sharedPressure * SpikyKernelGradient(distance, smoothingRadius) * direction;
+            
+            // SPH Viscosity force
+            viscosityForce += (neighborVel - vel) * ViscosityKernelLaplacian(distance, smoothingRadius);
+        }
+    }
+    
+    // Apply viscosity strength multiplier
+    viscosityForce *= viscosityStrength;
+    
+    // Combine all forces
+    particleForces[particleIdx] = pressureForce + viscosityForce + collisionForce;
+}
+
+[numthreads(256, 1, 1)]
+void ApplyForces(uint3 id : SV_DispatchThreadID)
+{
+    uint particleIdx = id.x;
+    if (particleIdx >= particleCount) 
+        return;
+    
+    // Apply forces to velocity
+    float3 force = particleForces[particleIdx];
+    particleVelocities[particleIdx] += force * dt;
+    
+    // Clear force for next frame
+    particleForces[particleIdx] = float3(0, 0, 0);
+}

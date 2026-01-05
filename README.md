@@ -15,7 +15,7 @@ Para a geração das partículas, optou-se pela criação de **octaedros**, defi
 
 O preenchimento das faces dos polígonos foi realizado com o método **CreateFace**, que tem como propósito a construção das superfícies do octaedro.
 
-Adicionalmente, foi desenvolvido um **shader** responsável por alterar a cor das partículas em função da sua direcção e velocidade, de forma a enriquecer o aspecto visual da simulação. No entanto, este efeito não se encontra totalmente funcional no momento de criação, uma vez que dependia da implementação completa da grelha de simulação.
+Adicionalmente, foi desenvolvido um **shader** responsável por alterar a cor das partículas em função da sua direção e velocidade, de forma a enriquecer o aspecto visual da simulação. No entanto, este efeito não se encontra totalmente funcional no momento de criação, uma vez que dependia da implementação completa da grelha de simulação.
 
 ### Problemas encontrados
 
@@ -85,11 +85,27 @@ Com a passagem das variáveis para os compute shaders, a simulação estabilizou
 
 ## Conclusão
 
-A simulação apresenta um comportamento funcional e visualmente coerente com cerca de **duas mil partículas**. Contudo, ao aumentar este número, a densidade do sistema cresce significativamente, originando instabilidades, que, após alguma pesquisa, verifica-se ser um problema comum em implementações de **Smoothed Particle Hydrodynamics**.
+A partir de certo ponto, não foi possível manter a simulação capaz de reproduzir o comportamento correto, ou seja, existem de momento dois protótipos de simulação de fluídos onde uma se mantém incompleta mas estável e outra mais completa mas instável, cujos comportamentos são os seguintes:
 
-Desta forma, o SPH calcula as interações locais das partículas (pressão e viscosidade), envia para a grelha que resolve a incompressibilidade e retorna para as partículas com os seus parâmetros.
+### Protótipo velho:
 
-Foram exploradas tentativas de limitar artificialmente a densidade máxima, sem sucesso. No entanto, ao aumentar a densidade base e reduzir o multiplicador de pressão, foi possível simular um maior número de partículas com relativa estabilidade. Ainda assim, esta abordagem teve um impacto negativo no desempenho, resultando numa diminuição considerável de FPS.
+- A simulação apresenta um comportamento funcional e visualmente coerente com cerca de **duas mil partículas**. Contudo, ao aumentar este número, a densidade do sistema cresce significativamente, originando instabilidades, que, após alguma pesquisa, verifica-se ser um problema comum em implementações de **Smoothed Particle Hydrodynamics**.
+
+- Desta forma, o SPH calcula as interações locais das partículas (pressão e viscosidade), envia para a grelha que resolve a incompressibilidade e retorna para as partículas com os seus parâmetros.
+
+- Foram exploradas tentativas de limitar artificialmente a densidade máxima, sem sucesso. No entanto, ao aumentar a densidade base e reduzir o multiplicador de pressão, foi possível simular um maior número de partículas com relativa estabilidade. Ainda assim, esta abordagem teve um impacto negativo no desempenho, resultando numa diminuição considerável de FPS.
+
+### Protótipo novo:
+
+- A simulação apresenta um comportamento disfuncional a qualquer número de partículas apesar da implementação de cada um dos parâmetros anteriores, este encontra-se mais avançado pois já contem compute shaders e o metódo FLIP que consiste nas interações grelha-particula e particula-particula, sendo a versão mais aproximada do método semi-Lagrangiano que obtemos.
+
+- Foram exploradas várias tentativas de reimplementação e alterações de parâmetro para procurar algo estável e correto, sem sucesso.
+
+- Por outro lado, os FPS não estão a sofrer qualquer tipo de redução, talvez porque algo está errado com a implementação de colisões ou os compute shaders estão de fato a fazer o seu trabalho, o que, por muitas reimplementações e testes que foram executados, não fomos capazes de encontrar o problema para o comportamento das partículas.
+
+## Últimas notas
+
+- Embora não tenhamos conseguido desenvolver um protótipo totalmente funcional, com todos os obstáculos ultrapassados, a conclusão da sua implementação e a obtenção de uma simulação funcional até determinado ponto permitiram-nos compreender não só a pesquisa necessária para o seu desenvolvimento, mas também a dificuldade enfrentada durante a sua execução.
 
 ---
 

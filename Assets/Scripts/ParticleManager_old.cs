@@ -27,7 +27,6 @@ namespace CGProject
         [SerializeField] private float viscosityStrength = 1.0f; // Força da viscosidade
 
         [Header("Movement Settings")]
-        [SerializeField] private float gridVelocityInfluence = 0.0f; // Influência da velocidade da grelha
         [SerializeField] private float damping = 0.98f; // Amortecimento da velocidade
         [SerializeField] private float maxSpeed = 8.0f; // Velocidade máxima das partículas
         [SerializeField] private float particleGravityScale = 1.0f; // Escala da gravidade aplicada às partículas
