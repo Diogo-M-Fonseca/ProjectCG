@@ -61,20 +61,37 @@ Para optimização do desempenho, foi implementada uma **grelha espacial**, redu
 
 Após múltiplas reimplementações do mesmo script, concluiu-se que, independentemente dos parâmetros utilizados, o fluido não atingia um estado estável. A redução da força das colisões resultava na sobreposição das partículas, enquanto forças de repulsão mais elevadas mantinham o sistema em constante movimento.
 
-Como tentativa de estabilização, substituiu-se a integração **Euler** por **Verlet**, com o objectivo de reduzir a instabilidade numérica. Foram ainda introduzidas variáveis adicionais, como **SurfaceTension** e **energyDissipationRate**, aplicadas no método *UpdateParticleSPH*, bem como perda adicional de energia durante colisões entre partículas.
+Como tentativa de estabilização, substituiu-se a integração **Euler** por **Verlet**, com o objectivo de reduzir a instabilidade numérica. Foram ainda introduzidas variáveis adicionais, como **SurfaceTension** e **energyDissipationRate**, aplicadas no método **UpdateParticleSPH**, bem como perda adicional de energia durante colisões entre partículas.
 
 ### Problemas encontrados
 
 - O desempenho da simulação degradou-se significativamente a partir de aproximadamente duas mil partículas.
+
 - A introdução de mecanismos de dissipação de energia não resolveu o problema de instabilidade, levando à remoção destas variáveis.
 
 ---
 
-## Obstáculo 5 - Método FLIP e compute shaders
+## Obstaculo 5 - Disconexão de Grids
 
-Para a simulação ser verdadeiramente semi-Lagrangiana, implementou-se o método FLIP para a sinergia necessária entre a grelha e as partículas ser possível, tendo um híbrido de SPH-FLIP. No entanto, por problemas de performance, mesmo implementando o método SPH, é necessário o uso de dois compute shaders, um para o calculo SPH e outro para a própria grelha.
+Foi adicionada um "gizmo" para ser possivel a visualização da Grid do script **FluidGrid3D** e das cells da mesma, atrás desse "gizmo" foi possivel observar que algumas particulas eram criadas fora da Grid mas comportavam-se de igual forma ás que eram criadas dentro da grid, isto cria algumas teorias sobre o que possivelmente poderia estar a acontecer.
 
-Com a passagem das variáveis para os compute shaders, a simulação estabilizou bastante, a perda de FPS deixou de ser um problema
+Possibilidade 1 - A grid não está a comunicar correctamente com as particulas sendo indifrente se as particulas são criadas dentro ou fora dela.
+
+Possibilidade 2 - Existe mais que uma grid e o gizmo só está a desenhar uma delas, neste caso o que faz mais sentido é apagar a grid que não queremos usar.
+
+Possibilidade 3 - O gizmo não está bem feito.
+
+### Problemas encontrados
+
+- As particulas parecem comportar-se de igual forma dentro ou fora da grid visualizada com o gizmo.
+
+- Quando um numero inferior a 3 mil particulas é criado as particulas parecem ficar "presas" a um plano inexistente em vez de se espalharem pelo comprimento todo do x e do z da grid.
+
+## Obstáculo 6 - Método PIC/FLIP e compute shaders
+
+Para a simulação ser verdadeiramente semi-Lagrangiana, implementou-se o método PIC/FLIP para a sinergia necessária entre a grelha e as partículas ser possível, tendo um híbrido de SPH-FLIP. No entanto, por problemas de performance, mesmo implementando o método SPH, é necessário o uso de dois compute shaders, um para o calculo SPH e outro para a própria grelha.
+
+Com a passagem das variáveis para os compute shaders, a simulação estabilizou bastante, a perda de FPS deixou de ser um problema.
 
 ### Problemas encontrados
 
@@ -82,6 +99,19 @@ Com a passagem das variáveis para os compute shaders, a simulação estabilizou
 
 - Após trocar alguns parâmetros, as partículas apenas caem como areia e juntam-se no fundo da simulação
 
+---
+
+## Obstáculo 6 - SPH vs PIC/FlIP
+
+SPH ou Smoothed-particle hydrodinamics é um dos metodos utilizados na computação grafica para simular o comportamento de agua através de particulas, ou seja são "contas" que passam informação particula-particula, enquanto que PIC/FLIP são "contas" que passam informação de grid-particula, dito isto a coexistencia de ambos é possivel mas bastante delicada, se ambos por algum desleixo fizerem a mesma conta as particulas acabam com valores extremamente incorrectos, sabendo disto tentamos retirar a influencia do SPH, mas os resultados não foram de todo satisfatórios.
+
+### problemas encontrados
+
+- As particulas estavam a comportarse de manerias muito incorrectas, desde serem criadas sem velocidades ou efeitos de gravidade até explodirem com diversas velocidades difrentes ou absurdas e nunca chegarem a um ponto de reposo.
+
+- Trocar Parâmetros pouco ou nada afetava as particulas nestes casos extremos.
+
+---
 
 ## Conclusão
 
