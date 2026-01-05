@@ -151,11 +151,11 @@ A simulação apresenta um comportamento funcional e visualmente coerente com ce
 
 ### Análise do Protótipo Novo
 
-A simulação apresenta um comportamento disfuncional para qualquer número de partículas, apesar de integrar *compute shaders* e o método **FLIP**, constituindo a versão mais próxima do método semi-Lagrangiano que conseguimos atingir. Várias tentativas de reimplementação e ajuste de parâmetros não resultaram numa simulação estável e correta. Por outro lado, os FPS mantêm-se elevados, possivelmente porque os *compute shaders* estão a executar eficientemente, mas a lógica de colisões ou a transferência de dados pode estar incorreta – um problema que não conseguimos identificar definitivamente.
+A simulação apresenta um comportamento disfuncional para qualquer número de partículas, apesar de integrar *compute shaders* e o método **FLIP**, constituindo a versão mais próxima do método semi-Lagrangiano que conseguimos atingir. Várias tentativas de reimplementação e ajuste de parâmetros não resultaram numa simulação estável e correta. Por outro lado, os FPS mantêm-se elevados, possivelmente porque os *compute shaders* estão a executar eficientemente, mas a lógica de colisões ou a transferência de dados pode estar incorreta, um problema que não conseguimos identificar definitivamente.
 
 ## Notas Finais
 
-Embora não tenhamos conseguido desenvolver um protótipo totalmente funcional que ultrapassasse todos os obstáculos, o processo de implementação e a obtenção de simulações parcialmente funcionais permitiram-nos compreender a investigação necessária e as dificuldades práticas inerentes ao desenvolvimento de uma simulação de fluidos. O projeto constituiu uma valiosa experiência de aprendizagem sobre os desafios da computação gráfica aplicada à simulação física.
+Embora não tenhamos conseguido desenvolver um protótipo totalmente funcional que ultrapassasse todos os obstáculos, o processo de implementação e a obtenção de simulações parcialmente funcionais permitiram-nos compreender a investigação necessária e as dificuldades práticas ao desenvolvimento de uma simulação de fluidos. O projeto constituiu uma valiosa experiência que nos levou a aprender sobre os desafios da computação gráfica aplicada à simulação física.
 
 ---
 
