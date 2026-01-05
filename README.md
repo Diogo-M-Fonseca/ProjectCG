@@ -126,11 +126,17 @@ Claramente maior parte dos tutorias e téses começam por criar uma simulação 
 A partir de certo ponto, não foi possível manter a simulação capaz de reproduzir o comportamento correto, ou seja, existem de momento dois protótipos de simulação de fluídos onde uma se mantém incompleta mas estável e outra mais completa mas instável, cujos comportamentos são os seguintes:
 
 - Simulação Velha (old)
-  - 
+  - As particulas caem até o fundo da grid.
+  - Após chegarem ao fundo da grid saltam/salpicam por um pouco até entrarem em repouso.
+  - Quando estão em repouso criam uma superficie estável.
+  - Alterar os diversos parametros afeta bastante o que acontece na simulação, podendo criar situações instáveis.
 
 
 - Simulação Nova (Compute)
-  - 
+  - As particulas caem até o fundo da grid
+  - Após chegarem ao fundo da grid entram em repouso instantaneamente
+  - Toda a logica fisica da simulação está em compute shaders
+  - Os parametros pouco afetam o que acontece na simulação devido a um problema com os kernels/buffers
 
 ### Protótipo velho:
 
